@@ -66,13 +66,13 @@ export function SwipeableReservationCard({
               style={[styles.actionIcon, { backgroundColor: '#4CAF50' }]}
               onPress={() => {
                 swipeableRef.current?.close();
-                onStatusChange(reservation.id!, 'ongoing');
+                onStatusChange(reservation.id!, 'on_water');
               }}
             />
           </Animated.View>
         )}
 
-        {reservation.status === 'ongoing' && (
+        {reservation.status === 'on_water' && (
           <Animated.View
             style={[styles.actionButton, { transform: [{ scale }] }]}
           >

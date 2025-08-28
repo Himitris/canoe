@@ -13,18 +13,15 @@ import {
   Chip,
   FAB,
   useTheme,
-  Searchbar,
   Button,
   Avatar,
   IconButton,
   ProgressBar,
-  Divider,
 } from 'react-native-paper';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { format, addDays } from 'date-fns';
 import { fr } from 'date-fns/locale';
 import { useDatabase } from '../../components/database/DatabaseProvider';
-import { SwipeableReservationCard } from '../../components/ui/SwipeableReservationCard';
 import { Reservation } from '../../services/DatabaseService';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
@@ -66,7 +63,6 @@ export default function Dashboard() {
     format(new Date(), 'yyyy-MM-dd')
   );
   const [selectedStatus, setSelectedStatus] = useState('all');
-  const [searchQuery, setSearchQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [showAllReservations, setShowAllReservations] = useState(false);
 
@@ -81,28 +77,17 @@ export default function Dashboard() {
 
       setAvailability(availabilityData);
       setReservations(reservationsData);
-      filterReservations(reservationsData, searchQuery, selectedStatus);
+      filterReservations(reservationsData, selectedStatus);
     } catch (error) {
       console.error('Erreur lors du chargement des données:', error);
     }
   };
 
-  const filterReservations = (
-    data: Reservation[],
-    query: string,
-    status: string
-  ) => {
+  const filterReservations = (data: Reservation[], status: string) => {
     let filtered = data;
 
     if (status !== 'all') {
       filtered = filtered.filter((r) => r.status === status);
-    }
-
-    if (query.trim()) {
-      const searchLower = query.toLowerCase();
-      filtered = filtered.filter((r) =>
-        r.name.toLowerCase().includes(searchLower)
-      );
     }
 
     setFilteredReservations(filtered);
@@ -122,14 +107,9 @@ export default function Dashboard() {
     }, [selectedDate, isReady, db])
   );
 
-  const handleSearch = (query: string) => {
-    setSearchQuery(query);
-    filterReservations(reservations, query, selectedStatus);
-  };
-
   const handleStatusFilter = (status: string) => {
     setSelectedStatus(status);
-    filterReservations(reservations, searchQuery, status);
+    filterReservations(reservations, status);
   };
 
   const handleStatusChange = async (
@@ -143,17 +123,6 @@ export default function Dashboard() {
       await loadData();
     } catch (error) {
       console.error('Erreur lors de la mise à jour du statut:', error);
-    }
-  };
-
-  const handleDuplicate = async (id: number) => {
-    if (!db) return;
-
-    try {
-      await db.duplicateReservation(id);
-      await loadData();
-    } catch (error) {
-      console.error('Erreur lors de la duplication:', error);
     }
   };
 
@@ -178,7 +147,7 @@ export default function Dashboard() {
   const getStatusCounts = () => {
     return {
       pending: reservations.filter((r) => r.status === 'pending').length,
-      ongoing: reservations.filter((r) => r.status === 'ongoing').length,
+      on_water: reservations.filter((r) => r.status === 'on_water').length,
       completed: reservations.filter((r) => r.status === 'completed').length,
       canceled: reservations.filter((r) => r.status === 'canceled').length,
     };
@@ -189,7 +158,7 @@ export default function Dashboard() {
     const percentage = used / total;
     if (percentage >= 0.9) return theme.colors.error;
     if (percentage >= 0.7) return '#FF9800';
-    return '#4CAF50'; // Use a green color for success
+    return '#4CAF50';
   };
 
   const renderCompactAvailability = () => {
@@ -302,9 +271,12 @@ export default function Dashboard() {
   const getStatusColor = (status: string) => {
     const colors = {
       pending: '#FF9800',
-      ongoing: '#2196F3',
-      completed: '#4CAF50',
+      arrived: '#2196F3',
+      on_water: '#4CAF50',
+      completed: '#9E9E9E',
       canceled: '#F44336',
+      // Support ancien statut
+      ongoing: '#4CAF50',
     };
     return colors[status as keyof typeof colors] || theme.colors.outline;
   };
@@ -312,9 +284,12 @@ export default function Dashboard() {
   const getStatusLabel = (status: string) => {
     const labels = {
       pending: 'Attente',
-      ongoing: 'En cours',
+      arrived: 'Arrivé',
+      on_water: "Sur l'eau",
       completed: 'Terminé',
       canceled: 'Annulé',
+      // Support ancien statut
+      ongoing: "Sur l'eau",
     };
     return labels[status as keyof typeof labels] || status;
   };
@@ -390,18 +365,18 @@ export default function Dashboard() {
           >
             <Card.Content style={styles.metricContent}>
               <MaterialCommunityIcons
-                name="account-group"
+                name="sail-boat"
                 size={24}
-                color="#388E3C"
+                color="#4CAF50"
               />
               <Text
                 variant="headlineSmall"
-                style={[styles.metricNumber, { color: '#388E3C' }]}
+                style={[styles.metricNumber, { color: '#4CAF50' }]}
               >
-                {reservations.reduce((sum, r) => sum + r.nb_people, 0)}
+                {statusCounts.on_water}
               </Text>
               <Text variant="labelMedium" style={styles.metricLabel}>
-                Personnes
+                Sur l'eau
               </Text>
             </Card.Content>
           </Card>
@@ -412,18 +387,18 @@ export default function Dashboard() {
           >
             <Card.Content style={styles.metricContent}>
               <MaterialCommunityIcons
-                name="kayaking"
+                name="account-check"
                 size={24}
-                color="#F57C00"
+                color="#2196F3"
               />
               <Text
                 variant="headlineSmall"
-                style={[styles.metricNumber, { color: '#F57C00' }]}
+                style={[styles.metricNumber, { color: '#2196F3' }]}
               >
-                {statusCounts.ongoing}
+                {statusCounts.arrived}
               </Text>
               <Text variant="labelMedium" style={styles.metricLabel}>
-                En cours
+                Arrivés
               </Text>
             </Card.Content>
           </Card>
@@ -478,17 +453,6 @@ export default function Dashboard() {
           ))}
         </ScrollView>
 
-        {/* Barre de recherche */}
-        <View style={styles.searchContainer}>
-          <Searchbar
-            placeholder="Rechercher par nom de client..."
-            onChangeText={handleSearch}
-            value={searchQuery}
-            style={styles.searchbar}
-            icon="account-search"
-          />
-        </View>
-
         {/* Filtres de statut */}
         <ScrollView
           horizontal
@@ -522,15 +486,15 @@ export default function Dashboard() {
           </Chip>
 
           <Chip
-            selected={selectedStatus === 'ongoing'}
-            onPress={() => handleStatusFilter('ongoing')}
+            selected={selectedStatus === 'on_water'}
+            onPress={() => handleStatusFilter('on_water')}
             style={[
               styles.statusChip,
-              selectedStatus === 'ongoing' && { backgroundColor: '#2196F3' },
+              selectedStatus === 'on_water' && { backgroundColor: '#4CAF50' },
             ]}
-            textStyle={[selectedStatus === 'ongoing' && { color: 'white' }]}
+            textStyle={[selectedStatus === 'on_water' && { color: 'white' }]}
           >
-            En cours ({statusCounts.ongoing})
+            Sur l'eau ({statusCounts.on_water})
           </Chip>
 
           <Chip
@@ -538,7 +502,7 @@ export default function Dashboard() {
             onPress={() => handleStatusFilter('completed')}
             style={[
               styles.statusChip,
-              selectedStatus === 'completed' && { backgroundColor: '#4CAF50' },
+              selectedStatus === 'completed' && { backgroundColor: '#9E9E9E' },
             ]}
             textStyle={[selectedStatus === 'completed' && { color: 'white' }]}
           >
@@ -562,9 +526,9 @@ export default function Dashboard() {
               <Button
                 mode="text"
                 compact
-                onPress={() => router.push('/reservations')}
+                onPress={() => router.push('/live-tracking')}
               >
-                Voir tout
+                Suivi Live
               </Button>
             </View>
 
@@ -576,7 +540,7 @@ export default function Dashboard() {
                   color={theme.colors.outline}
                 />
                 <Text variant="bodyLarge" style={styles.emptyText}>
-                  {searchQuery || selectedStatus !== 'all'
+                  {selectedStatus !== 'all'
                     ? 'Aucune réservation ne correspond aux filtres'
                     : 'Aucune réservation pour cette date'}
                 </Text>
@@ -618,11 +582,11 @@ export default function Dashboard() {
               </Button>
               <Button
                 mode="outlined"
-                icon="chart-line"
-                onPress={() => router.push('/statistics')}
+                icon="map-marker-path"
+                onPress={() => router.push('/live-tracking')}
                 style={styles.actionButton}
               >
-                Statistiques
+                Suivi Live
               </Button>
             </View>
           </Card.Content>
@@ -743,13 +707,6 @@ const styles = StyleSheet.create({
   availabilityText: {
     fontSize: 11,
     fontWeight: '600',
-  },
-  searchContainer: {
-    paddingHorizontal: 16,
-    marginBottom: 12,
-  },
-  searchbar: {
-    backgroundColor: 'white',
   },
   dateChipsContainer: {
     paddingHorizontal: 16,

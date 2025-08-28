@@ -18,14 +18,14 @@ import { Reservation } from '../../services/DatabaseService';
 
 const statusColors = {
   pending: '#FF9800',
-  ongoing: '#2196F3',
-  completed: '#4CAF50',
+  on_water: '#4CAF50',
+  completed: '#9E9E9E',
   canceled: '#F44336',
 };
 
 const statusLabels = {
   pending: 'En attente',
-  ongoing: 'En cours',
+  on_water: "Sur l'eau",
   completed: 'Terminé',
   canceled: 'Annulé',
 };
@@ -116,7 +116,16 @@ export default function Reservations() {
     if (!db) return;
 
     try {
-      await db.updateReservation(id, { status });
+      // Utiliser les nouvelles méthodes spécialisées
+      if (status === 'on_water') {
+        await db.markReservationOnWater(id);
+      } else if (status === 'completed') {
+        await db.markReservationCompleted(id);
+      } else {
+        // Pour pending et canceled, utiliser l'ancienne méthode
+        await db.updateReservation(id, { status });
+      }
+
       await loadReservations();
       setMenuVisible((prev) => ({ ...prev, [id]: false }));
     } catch (error) {
@@ -131,6 +140,21 @@ export default function Reservations() {
     }));
   };
 
+  const getDurationOnWater = (item: Reservation) => {
+    if (!item.departure_time) return null;
+
+    const departure = new Date(item.departure_time);
+    const now = item.return_time ? new Date(item.return_time) : new Date();
+    const diffMinutes = Math.floor(
+      (now.getTime() - departure.getTime()) / (1000 * 60)
+    );
+
+    if (diffMinutes < 60) return `${diffMinutes}min`;
+    const hours = Math.floor(diffMinutes / 60);
+    const minutes = diffMinutes % 60;
+    return `${hours}h${minutes > 0 ? minutes.toString().padStart(2, '0') : ''}`;
+  };
+
   const renderReservationItem = ({ item }: { item: Reservation }) => (
     <Card style={styles.reservationCard} mode="elevated">
       <Card.Content>
@@ -143,6 +167,14 @@ export default function Reservations() {
               {format(new Date(item.date), 'dd MMM yyyy', { locale: fr })} •{' '}
               {item.arrival_time}
             </Text>
+            {item.status === 'on_water' && getDurationOnWater(item) && (
+              <Text
+                variant="bodySmall"
+                style={[styles.durationText, { color: theme.colors.primary }]}
+              >
+                Sur l'eau depuis {getDurationOnWater(item)}
+              </Text>
+            )}
           </View>
           <Menu
             visible={menuVisible[item.id!] || false}
@@ -161,14 +193,14 @@ export default function Reservations() {
               leadingIcon="clock-outline"
             />
             <Menu.Item
-              onPress={() => updateReservationStatus(item.id!, 'ongoing')}
-              title="Marquer en cours"
-              leadingIcon="play"
+              onPress={() => updateReservationStatus(item.id!, 'on_water')}
+              title="Marquer sur l'eau"
+              leadingIcon="sail-boat"
             />
             <Menu.Item
               onPress={() => updateReservationStatus(item.id!, 'completed')}
               title="Marquer terminé"
-              leadingIcon="check"
+              leadingIcon="check-circle"
             />
             <Menu.Item
               onPress={() => updateReservationStatus(item.id!, 'canceled')}
@@ -216,7 +248,7 @@ export default function Reservations() {
 
   const renderFilterChips = () => (
     <View style={styles.filterContainer}>
-      {['all', 'pending', 'ongoing', 'completed', 'canceled'].map((status) => (
+      {['all', 'pending', 'on_water', 'completed', 'canceled'].map((status) => (
         <Chip
           key={status}
           selected={statusFilter === status}
@@ -346,6 +378,11 @@ const styles = StyleSheet.create({
   },
   reservationDate: {
     color: '#666',
+  },
+  durationText: {
+    fontWeight: '600',
+    fontSize: 12,
+    marginTop: 4,
   },
   reservationDetails: {
     marginBottom: 12,

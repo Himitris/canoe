@@ -14,12 +14,12 @@ export default function TabLayout() {
         tabBarStyle: {
           backgroundColor: theme.colors.surface,
           borderTopColor: theme.colors.outline,
-          height: 60,
+          height: 65,
           paddingBottom: 8,
           paddingTop: 8,
         },
         tabBarLabelStyle: {
-          fontSize: 11,
+          fontSize: 10,
           fontWeight: '500',
         },
       }}
@@ -31,6 +31,19 @@ export default function TabLayout() {
           tabBarIcon: ({ size, color }) => (
             <MaterialCommunityIcons
               name="view-dashboard"
+              size={size}
+              color={color}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="live-tracking"
+        options={{
+          title: 'Suivi',
+          tabBarIcon: ({ size, color }) => (
+            <MaterialCommunityIcons
+              name="map-marker-path"
               size={size}
               color={color}
             />
