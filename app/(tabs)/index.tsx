@@ -5,6 +5,7 @@ import {
   StyleSheet,
   RefreshControl,
   Dimensions,
+  FlatList,
 } from 'react-native';
 import {
   Card,
@@ -17,9 +18,11 @@ import {
   Avatar,
   IconButton,
   ProgressBar,
+  TouchableRipple,
+  Searchbar,
 } from 'react-native-paper';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { format, addDays } from 'date-fns';
+import { format, addDays, subDays } from 'date-fns';
 import { fr } from 'date-fns/locale';
 import { useDatabase } from '../../components/database/DatabaseProvider';
 import { Reservation } from '../../services/DatabaseService';
@@ -46,6 +49,11 @@ interface AvailabilityData {
   };
 }
 
+interface ReservationWithStatus extends Reservation {
+  isLate?: boolean;
+  lateMinutes?: number;
+}
+
 const { width } = Dimensions.get('window');
 
 export default function Dashboard() {
@@ -55,14 +63,15 @@ export default function Dashboard() {
   const [availability, setAvailability] = useState<AvailabilityData | null>(
     null
   );
-  const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [reservations, setReservations] = useState<ReservationWithStatus[]>([]);
   const [filteredReservations, setFilteredReservations] = useState<
-    Reservation[]
+    ReservationWithStatus[]
   >([]);
   const [selectedDate, setSelectedDate] = useState(
     format(new Date(), 'yyyy-MM-dd')
   );
   const [selectedStatus, setSelectedStatus] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [showAllReservations, setShowAllReservations] = useState(false);
 
@@ -76,19 +85,58 @@ export default function Dashboard() {
       ]);
 
       setAvailability(availabilityData);
-      setReservations(reservationsData);
-      filterReservations(reservationsData, selectedStatus);
+
+      // Ajouter les informations de retard
+      const reservationsWithStatus = reservationsData.map((reservation) => {
+        const now = new Date();
+        const expectedTime = new Date(
+          `${reservation.date}T${reservation.arrival_time}:00`
+        );
+        const isLate = reservation.status === 'pending' && now > expectedTime;
+        const lateMinutes = isLate
+          ? Math.floor((now.getTime() - expectedTime.getTime()) / (1000 * 60))
+          : 0;
+
+        return { ...reservation, isLate, lateMinutes } as ReservationWithStatus;
+      });
+
+      setReservations(reservationsWithStatus);
+      filterReservations(reservationsWithStatus, selectedStatus, searchQuery);
     } catch (error) {
       console.error('Erreur lors du chargement des données:', error);
     }
   };
 
-  const filterReservations = (data: Reservation[], status: string) => {
+  const filterReservations = (
+    data: ReservationWithStatus[],
+    status: string,
+    search: string
+  ) => {
     let filtered = data;
 
     if (status !== 'all') {
-      filtered = filtered.filter((r) => r.status === status);
+      if (status === 'late') {
+        filtered = filtered.filter((r) => r.isLate);
+      } else {
+        filtered = filtered.filter((r) => r.status === status);
+      }
     }
+
+    if (search.trim()) {
+      const searchLower = search.toLowerCase();
+      filtered = filtered.filter((r) =>
+        r.name.toLowerCase().includes(searchLower)
+      );
+    }
+
+    // Tri : retards en premier, puis par heure
+    filtered.sort((a, b) => {
+      if (a.isLate && !b.isLate) return -1;
+      if (!a.isLate && b.isLate) return 1;
+      if (a.status === 'pending' && b.status !== 'pending') return -1;
+      if (a.status !== 'pending' && b.status === 'pending') return 1;
+      return a.arrival_time.localeCompare(b.arrival_time);
+    });
 
     setFilteredReservations(filtered);
   };
@@ -109,7 +157,12 @@ export default function Dashboard() {
 
   const handleStatusFilter = (status: string) => {
     setSelectedStatus(status);
-    filterReservations(reservations, status);
+    filterReservations(reservations, status, searchQuery);
+  };
+
+  const handleSearch = (query: string) => {
+    setSearchQuery(query);
+    filterReservations(reservations, selectedStatus, query);
   };
 
   const handleStatusChange = async (
@@ -119,37 +172,36 @@ export default function Dashboard() {
     if (!db) return;
 
     try {
-      await db.updateReservation(id, { status });
+      if (status === 'on_water') {
+        await db.markReservationOnWater(id);
+      } else if (status === 'completed') {
+        await db.markReservationCompleted(id);
+      } else {
+        await db.updateReservation(id, { status });
+      }
       await loadData();
     } catch (error) {
       console.error('Erreur lors de la mise à jour du statut:', error);
     }
   };
 
-  const getDateChips = () => {
-    const dates = [];
-    for (let i = 0; i < 7; i++) {
-      const date = addDays(new Date(), i);
-      dates.push({
-        label:
-          i === 0
-            ? "Aujourd'hui"
-            : i === 1
-            ? 'Demain'
-            : format(date, 'dd MMM', { locale: fr }),
-        value: format(date, 'yyyy-MM-dd'),
-        date: date,
-      });
-    }
-    return dates;
+  // Navigation par dates avec swipe
+  const navigateDate = (direction: 'prev' | 'next') => {
+    const currentDate = new Date(selectedDate);
+    const newDate =
+      direction === 'next' ? addDays(currentDate, 1) : subDays(currentDate, 1);
+    setSelectedDate(format(newDate, 'yyyy-MM-dd'));
   };
 
   const getStatusCounts = () => {
     return {
       pending: reservations.filter((r) => r.status === 'pending').length,
+      arrived: reservations.filter(
+        (r) => r.status === 'pending' && r.actual_arrival_time
+      ).length,
       on_water: reservations.filter((r) => r.status === 'on_water').length,
       completed: reservations.filter((r) => r.status === 'completed').length,
-      canceled: reservations.filter((r) => r.status === 'canceled').length,
+      late: reservations.filter((r) => r.isLate).length,
     };
   };
 
@@ -159,6 +211,70 @@ export default function Dashboard() {
     if (percentage >= 0.9) return theme.colors.error;
     if (percentage >= 0.7) return '#FF9800';
     return '#4CAF50';
+  };
+
+  // Rendu séparé pour les canoës simples et doubles
+  const renderAvailabilitySlot = (
+    title: string,
+    icon: string,
+    data: {
+      single: number;
+      double: number;
+      total_single: number;
+      total_double: number;
+    }
+  ) => {
+    const singleUsed = data.total_single - data.single;
+    const doubleUsed = data.total_double - data.double;
+
+    return (
+      <View key={title} style={styles.availabilitySlot}>
+        <View style={styles.slotHeader}>
+          <MaterialCommunityIcons
+            name={icon as any}
+            size={16}
+            color={theme.colors.primary}
+          />
+          <Text variant="labelMedium" style={styles.slotLabel}>
+            {title}
+          </Text>
+        </View>
+
+        {/* Canoës simples */}
+        <View style={styles.canoeTypeRow}>
+          <Text variant="labelSmall" style={styles.canoeTypeLabel}>
+            Simples
+          </Text>
+          <ProgressBar
+            progress={
+              data.total_single > 0 ? singleUsed / data.total_single : 0
+            }
+            color={getOccupancyColor(singleUsed, data.total_single)}
+            style={styles.progressBar}
+          />
+          <Text variant="labelSmall" style={styles.availabilityText}>
+            {data.single}/{data.total_single}
+          </Text>
+        </View>
+
+        {/* Canoës doubles */}
+        <View style={styles.canoeTypeRow}>
+          <Text variant="labelSmall" style={styles.canoeTypeLabel}>
+            Doubles
+          </Text>
+          <ProgressBar
+            progress={
+              data.total_double > 0 ? doubleUsed / data.total_double : 0
+            }
+            color={getOccupancyColor(doubleUsed, data.total_double)}
+            style={styles.progressBar}
+          />
+          <Text variant="labelSmall" style={styles.availabilityText}>
+            {data.double}/{data.total_double}
+          </Text>
+        </View>
+      </View>
+    );
   };
 
   const renderCompactAvailability = () => {
@@ -187,111 +303,160 @@ export default function Dashboard() {
 
     return (
       <View style={styles.compactAvailability}>
-        {slots.map((slot) => {
-          const singleUsed = slot.data.total_single - slot.data.single;
-          const doubleUsed = slot.data.total_double - slot.data.double;
-          const totalUsed = singleUsed + doubleUsed;
-          const totalCanoes = slot.data.total_single + slot.data.total_double;
-          const progress = totalCanoes > 0 ? totalUsed / totalCanoes : 0;
-
-          return (
-            <View key={slot.key} style={styles.availabilitySlot}>
-              <View style={styles.slotHeader}>
-                <MaterialCommunityIcons
-                  name={slot.icon as any}
-                  size={16}
-                  color={theme.colors.primary}
-                />
-                <Text variant="labelMedium" style={styles.slotLabel}>
-                  {slot.label}
-                </Text>
-              </View>
-              <ProgressBar
-                progress={progress}
-                color={getOccupancyColor(totalUsed, totalCanoes)}
-                style={styles.progressBar}
-              />
-              <Text variant="labelSmall" style={styles.availabilityText}>
-                {slot.data.single + slot.data.double}/{totalCanoes}
-              </Text>
-            </View>
-          );
-        })}
+        {slots.map((slot) =>
+          renderAvailabilitySlot(slot.label, slot.icon, slot.data)
+        )}
       </View>
     );
   };
 
-  const renderCompactReservation = (
-    reservation: Reservation,
-    index: number
-  ) => (
-    <Card key={reservation.id} style={styles.compactCard} mode="outlined">
-      <Card.Content style={styles.compactContent}>
-        <View style={styles.reservationHeader}>
-          <Avatar.Text
-            size={32}
-            label={reservation.name.charAt(0).toUpperCase()}
-            style={{ backgroundColor: theme.colors.primaryContainer }}
-            labelStyle={{ fontSize: 14, color: theme.colors.primary }}
+  const renderReservationItem = ({
+    item,
+    index,
+  }: {
+    item: ReservationWithStatus;
+    index: number;
+  }) => {
+    const getStatusInfo = () => {
+      if (item.isLate) {
+        return {
+          color: '#D32F2F',
+          bgColor: '#FFCDD2',
+          icon: 'alert-circle',
+          text: `RETARD ${item.lateMinutes}min`,
+          textColor: '#D32F2F',
+        };
+      }
+
+      switch (item.status) {
+        case 'pending':
+          return {
+            color: '#F57C00',
+            bgColor: '#FFE0B2',
+            icon: 'clock-outline',
+            text: 'EN ATTENTE',
+            textColor: '#E65100',
+          };
+        case 'on_water':
+          return {
+            color: '#388E3C',
+            bgColor: '#C8E6C9',
+            icon: 'sail-boat',
+            text: "SUR L'EAU",
+            textColor: '#2E7D32',
+          };
+        case 'completed':
+          return {
+            color: '#616161',
+            bgColor: '#E0E0E0',
+            icon: 'check-circle',
+            text: 'TERMINÉ',
+            textColor: '#424242',
+          };
+        default:
+          return {
+            color: '#757575',
+            bgColor: '#F5F5F5',
+            icon: 'help-circle',
+            text: 'INCONNU',
+            textColor: '#616161',
+          };
+      }
+    };
+
+    const statusInfo = getStatusInfo();
+    const isEven = index % 2 === 0;
+
+    return (
+      <TouchableRipple
+        key={item.id}
+        onPress={() => {}}
+        style={[
+          styles.reservationRow,
+          { backgroundColor: isEven ? '#FAFAFA' : 'white' },
+        ]}
+      >
+        <View style={styles.reservationContent}>
+          {/* Indicateur coloré */}
+          <View
+            style={[styles.statusBar, { backgroundColor: statusInfo.color }]}
           />
-          <View style={styles.reservationInfo}>
-            <Text
-              variant="bodyMedium"
-              style={styles.customerName}
-              numberOfLines={1}
-            >
-              {reservation.name}
+
+          {/* Info client */}
+          <View style={styles.clientSection}>
+            <Text style={styles.clientName} numberOfLines={1}>
+              {item.name}
             </Text>
-            <Text variant="labelSmall" style={styles.reservationDetails}>
-              {reservation.nb_people}p • {reservation.single_canoes}S+
-              {reservation.double_canoes}D • {reservation.arrival_time}
+            <Text style={styles.timeText}>{item.arrival_time}</Text>
+          </View>
+
+          {/* Détails */}
+          <View style={styles.detailsSection}>
+            <Text style={styles.peopleText}>{item.nb_people}p</Text>
+            <Text style={styles.canoeText}>
+              {item.single_canoes}S+{item.double_canoes}D
+            </Text>
+            <Text style={styles.slotText}>
+              {item.timeslot === 'morning'
+                ? 'MAT'
+                : item.timeslot === 'afternoon'
+                ? 'APM'
+                : 'J'}
             </Text>
           </View>
-          <View style={styles.reservationActions}>
-            <Chip
-              mode="outlined"
-              compact
+
+          {/* Statut */}
+          <View style={styles.statusSection}>
+            <View
               style={[
-                styles.statusChip,
-                {
-                  backgroundColor: getStatusColor(reservation.status),
-                  borderColor: getStatusColor(reservation.status),
-                },
+                styles.statusBadge,
+                { backgroundColor: statusInfo.bgColor },
               ]}
-              textStyle={styles.statusChipText}
             >
-              {getStatusLabel(reservation.status)}
-            </Chip>
+              <MaterialCommunityIcons
+                name={statusInfo.icon as any}
+                size={14}
+                color={statusInfo.textColor}
+              />
+              <Text
+                style={[styles.statusText, { color: statusInfo.textColor }]}
+              >
+                {statusInfo.text}
+              </Text>
+            </View>
+          </View>
+
+          {/* Actions */}
+          <View style={styles.actionSection}>
+            {item.status === 'pending' && (
+              <TouchableRipple
+                onPress={() => handleStatusChange(item.id!, 'on_water')}
+                style={[styles.actionButton, { backgroundColor: '#388E3C' }]}
+              >
+                <MaterialCommunityIcons
+                  name="sail-boat"
+                  size={18}
+                  color="white"
+                />
+              </TouchableRipple>
+            )}
+
+            {item.status === 'on_water' && (
+              <TouchableRipple
+                onPress={() => handleStatusChange(item.id!, 'completed')}
+                style={[styles.actionButton, { backgroundColor: '#616161' }]}
+              >
+                <MaterialCommunityIcons
+                  name="check-circle"
+                  size={18}
+                  color="white"
+                />
+              </TouchableRipple>
+            )}
           </View>
         </View>
-      </Card.Content>
-    </Card>
-  );
-
-  const getStatusColor = (status: string) => {
-    const colors = {
-      pending: '#FF9800',
-      arrived: '#2196F3',
-      on_water: '#4CAF50',
-      completed: '#9E9E9E',
-      canceled: '#F44336',
-      // Support ancien statut
-      ongoing: '#4CAF50',
-    };
-    return colors[status as keyof typeof colors] || theme.colors.outline;
-  };
-
-  const getStatusLabel = (status: string) => {
-    const labels = {
-      pending: 'Attente',
-      arrived: 'Arrivé',
-      on_water: "Sur l'eau",
-      completed: 'Terminé',
-      canceled: 'Annulé',
-      // Support ancien statut
-      ongoing: "Sur l'eau",
-    };
-    return labels[status as keyof typeof labels] || status;
+      </TouchableRipple>
+    );
   };
 
   if (!isReady) {
@@ -305,7 +470,7 @@ export default function Dashboard() {
   const statusCounts = getStatusCounts();
   const displayedReservations = showAllReservations
     ? filteredReservations
-    : filteredReservations.slice(0, 5);
+    : filteredReservations.slice(0, 10);
 
   return (
     <View style={styles.container}>
@@ -316,26 +481,33 @@ export default function Dashboard() {
         }
         showsVerticalScrollIndicator={false}
       >
-        {/* En-tête sophistiqué */}
+        {/* En-tête avec navigation de date */}
         <View style={styles.header}>
           <View style={styles.headerContent}>
-            <View>
+            <IconButton
+              icon="chevron-left"
+              size={24}
+              iconColor="white"
+              onPress={() => navigateDate('prev')}
+            />
+            <View style={styles.headerTextContainer}>
               <Title style={styles.headerTitle}>Tableau de Bord</Title>
               <Text variant="bodyMedium" style={styles.headerSubtitle}>
-                {format(new Date(), 'EEEE dd MMMM yyyy', { locale: fr })}
+                {format(new Date(selectedDate), 'EEEE dd MMMM yyyy', {
+                  locale: fr,
+                })}
               </Text>
             </View>
             <IconButton
-              icon="plus-circle"
-              size={32}
+              icon="chevron-right"
+              size={24}
               iconColor="white"
-              style={styles.quickAddButton}
-              onPress={() => router.push('/add-reservation')}
+              onPress={() => navigateDate('next')}
             />
           </View>
         </View>
 
-        {/* Métriques rapides */}
+        {/* Métriques corrigées */}
         <View style={styles.metricsRow}>
           <Card
             style={[styles.metricCard, { backgroundColor: '#E3F2FD' }]}
@@ -355,6 +527,28 @@ export default function Dashboard() {
               </Text>
               <Text variant="labelMedium" style={styles.metricLabel}>
                 Réservations
+              </Text>
+            </Card.Content>
+          </Card>
+
+          <Card
+            style={[styles.metricCard, { backgroundColor: '#FFF3E0' }]}
+            mode="elevated"
+          >
+            <Card.Content style={styles.metricContent}>
+              <MaterialCommunityIcons
+                name="account-check"
+                size={24}
+                color="#FF9800"
+              />
+              <Text
+                variant="headlineSmall"
+                style={[styles.metricNumber, { color: '#FF9800' }]}
+              >
+                {statusCounts.arrived}
+              </Text>
+              <Text variant="labelMedium" style={styles.metricLabel}>
+                Arrivés
               </Text>
             </Card.Content>
           </Card>
@@ -380,31 +574,9 @@ export default function Dashboard() {
               </Text>
             </Card.Content>
           </Card>
-
-          <Card
-            style={[styles.metricCard, { backgroundColor: '#FFF3E0' }]}
-            mode="elevated"
-          >
-            <Card.Content style={styles.metricContent}>
-              <MaterialCommunityIcons
-                name="account-check"
-                size={24}
-                color="#2196F3"
-              />
-              <Text
-                variant="headlineSmall"
-                style={[styles.metricNumber, { color: '#2196F3' }]}
-              >
-                {statusCounts.arrived}
-              </Text>
-              <Text variant="labelMedium" style={styles.metricLabel}>
-                Arrivés
-              </Text>
-            </Card.Content>
-          </Card>
         </View>
 
-        {/* Disponibilité compacte */}
+        {/* Disponibilité améliorée */}
         <Card style={styles.card} mode="elevated">
           <Card.Content>
             <View style={styles.cardHeader}>
@@ -416,42 +588,20 @@ export default function Dashboard() {
               <Text variant="titleMedium" style={styles.cardTitle}>
                 Disponibilité en Temps Réel
               </Text>
-              <Button
-                mode="text"
-                compact
-                onPress={() => router.push('/statistics')}
-              >
-                Détails
-              </Button>
             </View>
             {renderCompactAvailability()}
           </Card.Content>
         </Card>
 
-        {/* Sélecteur de date */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.dateChipsContainer}
-        >
-          {getDateChips().map((dateItem) => (
-            <Chip
-              key={dateItem.value}
-              selected={selectedDate === dateItem.value}
-              onPress={() => setSelectedDate(dateItem.value)}
-              style={[
-                styles.dateChip,
-                selectedDate === dateItem.value && styles.selectedDateChip,
-              ]}
-              textStyle={[
-                styles.dateChipText,
-                selectedDate === dateItem.value && styles.selectedDateChipText,
-              ]}
-            >
-              {dateItem.label}
-            </Chip>
-          ))}
-        </ScrollView>
+        {/* Barre de recherche */}
+        <Searchbar
+          placeholder="Rechercher un client..."
+          onChangeText={handleSearch}
+          value={searchQuery}
+          style={styles.searchbar}
+          inputStyle={styles.searchInput}
+          iconColor="#1976D2"
+        />
 
         {/* Filtres de statut */}
         <ScrollView
@@ -459,58 +609,63 @@ export default function Dashboard() {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.statusChipsContainer}
         >
-          <Chip
-            selected={selectedStatus === 'all'}
-            onPress={() => handleStatusFilter('all')}
-            style={[
-              styles.statusChip,
-              selectedStatus === 'all' && styles.selectedStatusChip,
-            ]}
-            textStyle={[
-              selectedStatus === 'all' && styles.selectedStatusChipText,
-            ]}
-          >
-            Toutes ({reservations.length})
-          </Chip>
-
-          <Chip
-            selected={selectedStatus === 'pending'}
-            onPress={() => handleStatusFilter('pending')}
-            style={[
-              styles.statusChip,
-              selectedStatus === 'pending' && { backgroundColor: '#FF9800' },
-            ]}
-            textStyle={[selectedStatus === 'pending' && { color: 'white' }]}
-          >
-            Attente ({statusCounts.pending})
-          </Chip>
-
-          <Chip
-            selected={selectedStatus === 'on_water'}
-            onPress={() => handleStatusFilter('on_water')}
-            style={[
-              styles.statusChip,
-              selectedStatus === 'on_water' && { backgroundColor: '#4CAF50' },
-            ]}
-            textStyle={[selectedStatus === 'on_water' && { color: 'white' }]}
-          >
-            Sur l'eau ({statusCounts.on_water})
-          </Chip>
-
-          <Chip
-            selected={selectedStatus === 'completed'}
-            onPress={() => handleStatusFilter('completed')}
-            style={[
-              styles.statusChip,
-              selectedStatus === 'completed' && { backgroundColor: '#9E9E9E' },
-            ]}
-            textStyle={[selectedStatus === 'completed' && { color: 'white' }]}
-          >
-            Terminées ({statusCounts.completed})
-          </Chip>
+          {[
+            {
+              key: 'all',
+              label: 'TOUTES',
+              count:
+                statusCounts.pending +
+                statusCounts.on_water +
+                statusCounts.completed,
+              color: '#1976D2',
+            },
+            {
+              key: 'late',
+              label: 'RETARDS',
+              count: statusCounts.late,
+              color: '#D32F2F',
+            },
+            {
+              key: 'pending',
+              label: 'ATTENTE',
+              count: statusCounts.pending,
+              color: '#F57C00',
+            },
+            {
+              key: 'on_water',
+              label: "SUR L'EAU",
+              count: statusCounts.on_water,
+              color: '#388E3C',
+            },
+            {
+              key: 'completed',
+              label: 'TERMINÉ',
+              count: statusCounts.completed,
+              color: '#616161',
+            },
+          ].map((filter) => (
+            <Chip
+              key={filter.key}
+              selected={selectedStatus === filter.key}
+              onPress={() => handleStatusFilter(filter.key)}
+              compact
+              style={[
+                styles.filterChip,
+                selectedStatus === filter.key && {
+                  backgroundColor: filter.color,
+                },
+              ]}
+              textStyle={[
+                styles.filterChipText,
+                selectedStatus === filter.key && { color: 'white' },
+              ]}
+            >
+              {filter.label} ({filter.count})
+            </Chip>
+          ))}
         </ScrollView>
 
-        {/* Liste des réservations */}
+        {/* Liste des réservations unifiée */}
         <Card style={styles.card} mode="elevated">
           <Card.Content>
             <View style={styles.cardHeader}>
@@ -523,13 +678,9 @@ export default function Dashboard() {
                 Réservations -{' '}
                 {format(new Date(selectedDate), 'dd MMM', { locale: fr })}
               </Text>
-              <Button
-                mode="text"
-                compact
-                onPress={() => router.push('/live-tracking')}
-              >
-                Suivi Live
-              </Button>
+              <Text variant="labelSmall" style={styles.totalCount}>
+                {filteredReservations.length} résultat(s)
+              </Text>
             </View>
 
             {filteredReservations.length === 0 ? (
@@ -540,55 +691,40 @@ export default function Dashboard() {
                   color={theme.colors.outline}
                 />
                 <Text variant="bodyLarge" style={styles.emptyText}>
-                  {selectedStatus !== 'all'
+                  {searchQuery || selectedStatus !== 'all'
                     ? 'Aucune réservation ne correspond aux filtres'
                     : 'Aucune réservation pour cette date'}
                 </Text>
               </View>
             ) : (
-              <View style={styles.reservationsList}>
-                {displayedReservations.map((reservation, index) =>
-                  renderCompactReservation(reservation, index)
-                )}
-
-                {filteredReservations.length > 5 && !showAllReservations && (
-                  <Button
-                    mode="outlined"
-                    onPress={() => setShowAllReservations(true)}
-                    style={styles.showMoreButton}
-                  >
-                    Voir {filteredReservations.length - 5} de plus
-                  </Button>
-                )}
-              </View>
+              <FlatList
+                data={displayedReservations}
+                renderItem={renderReservationItem}
+                keyExtractor={(item) => item.id!.toString()}
+                style={styles.reservationsList}
+                scrollEnabled={false}
+                removeClippedSubviews={true}
+                maxToRenderPerBatch={20}
+                windowSize={10}
+                initialNumToRender={10}
+                getItemLayout={(data, index) => ({
+                  length: 60,
+                  offset: 60 * index,
+                  index,
+                })}
+                ListFooterComponent={() =>
+                  filteredReservations.length > 10 && !showAllReservations ? (
+                    <Button
+                      mode="outlined"
+                      onPress={() => setShowAllReservations(true)}
+                      style={styles.showMoreButton}
+                    >
+                      Voir {filteredReservations.length - 10} de plus
+                    </Button>
+                  ) : null
+                }
+              />
             )}
-          </Card.Content>
-        </Card>
-
-        {/* Actions rapides */}
-        <Card style={styles.card} mode="outlined">
-          <Card.Content>
-            <Text variant="titleMedium" style={styles.cardTitle}>
-              Actions Rapides
-            </Text>
-            <View style={styles.quickActions}>
-              <Button
-                mode="contained"
-                icon="plus"
-                onPress={() => router.push('/add-reservation')}
-                style={styles.actionButton}
-              >
-                Nouvelle Réservation
-              </Button>
-              <Button
-                mode="outlined"
-                icon="map-marker-path"
-                onPress={() => router.push('/live-tracking')}
-                style={styles.actionButton}
-              >
-                Suivi Live
-              </Button>
-            </View>
           </Card.Content>
         </Card>
       </ScrollView>
@@ -629,17 +765,20 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  headerTextContainer: {
+    flex: 1,
+    alignItems: 'center',
+  },
   headerTitle: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: 'bold',
     color: 'white',
+    textAlign: 'center',
   },
   headerSubtitle: {
     color: 'rgba(255,255,255,0.8)',
     marginTop: 4,
-  },
-  quickAddButton: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    textAlign: 'center',
   },
   metricsRow: {
     flexDirection: 'row',
@@ -662,6 +801,7 @@ const styles = StyleSheet.create({
   metricLabel: {
     color: '#666',
     marginTop: 2,
+    textAlign: 'center',
   },
   card: {
     marginHorizontal: 16,
@@ -679,51 +819,60 @@ const styles = StyleSheet.create({
     color: '#1976D2',
     flex: 1,
   },
+  totalCount: {
+    color: '#666',
+  },
   compactAvailability: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexDirection: 'column',
     gap: 16,
   },
   availabilitySlot: {
-    flex: 1,
-    alignItems: 'center',
+    backgroundColor: '#F8F9FA',
+    borderRadius: 8,
+    padding: 12,
   },
   slotHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 6,
     marginBottom: 8,
   },
   slotLabel: {
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  progressBar: {
-    width: '100%',
-    height: 8,
-    borderRadius: 4,
-    marginBottom: 4,
-  },
-  availabilityText: {
-    fontSize: 11,
+    fontSize: 14,
     fontWeight: '600',
+    color: '#1976D2',
   },
-  dateChipsContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+  canoeTypeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
     gap: 8,
   },
-  dateChip: {
-    marginHorizontal: 4,
-  },
-  selectedDateChip: {
-    backgroundColor: '#1976D2',
-  },
-  dateChipText: {
+  canoeTypeLabel: {
+    minWidth: 50,
     fontSize: 12,
+    fontWeight: '500',
+    color: '#666',
   },
-  selectedDateChipText: {
-    color: 'white',
+  progressBar: {
+    flex: 1,
+    height: 8,
+    borderRadius: 4,
+  },
+  availabilityText: {
+    minWidth: 35,
+    fontSize: 11,
+    fontWeight: '600',
+    textAlign: 'right',
+  },
+  searchbar: {
+    backgroundColor: 'white',
+    marginHorizontal: 16,
+    marginBottom: 12,
+    elevation: 2,
+  },
+  searchInput: {
+    fontSize: 14,
   },
   statusChipsContainer: {
     paddingHorizontal: 16,
@@ -731,14 +880,15 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 16,
   },
-  statusChip: {
-    marginHorizontal: 4,
+  filterChip: {
+    backgroundColor: '#F8F9FA',
+    height: 32,
+    marginHorizontal: 2,
   },
-  selectedStatusChip: {
-    backgroundColor: '#1976D2',
-  },
-  selectedStatusChipText: {
-    color: 'white',
+  filterChipText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#757575',
   },
   emptyContent: {
     alignItems: 'center',
@@ -750,48 +900,94 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   reservationsList: {
-    gap: 8,
+    maxHeight: 600,
   },
-  compactCard: {
-    backgroundColor: 'white',
+  reservationRow: {
+    height: 60,
+    marginVertical: 1,
   },
-  compactContent: {
-    paddingVertical: 12,
-  },
-  reservationHeader: {
+  reservationContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    height: '100%',
+    paddingHorizontal: 12,
   },
-  reservationInfo: {
-    flex: 1,
+  statusBar: {
+    width: 4,
+    height: '80%',
+    marginRight: 12,
+    borderRadius: 2,
   },
-  customerName: {
-    fontWeight: '600',
+  clientSection: {
+    flex: 2,
+    minWidth: 100,
+  },
+  clientName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#212121',
     marginBottom: 2,
   },
-  reservationDetails: {
-    color: '#666',
+  timeText: {
+    fontSize: 12,
+    color: '#757575',
+    fontWeight: '600',
   },
-  reservationActions: {
+  detailsSection: {
+    flex: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  peopleText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1976D2',
+    minWidth: 20,
+  },
+  canoeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#757575',
+    minWidth: 35,
+  },
+  slotText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#9E9E9E',
+    minWidth: 25,
+  },
+  statusSection: {
+    flex: 2,
     alignItems: 'center',
   },
-  statusChipText: {
-    fontSize: 11,
-    fontWeight: '500',
-    color: 'white',
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    gap: 4,
+  },
+  statusText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  actionSection: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  actionButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 2,
   },
   showMoreButton: {
     marginTop: 12,
     borderColor: '#1976D2',
-  },
-  quickActions: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 16,
-  },
-  actionButton: {
-    flex: 1,
   },
   fab: {
     position: 'absolute',

@@ -24,10 +24,11 @@ export default function TabLayout() {
         },
       }}
     >
+      {/* Tableau de bord principal - fusionnant accueil, réservations et suivi */}
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Accueil',
+          title: 'Tableau de Bord',
           tabBarIcon: ({ size, color }) => (
             <MaterialCommunityIcons
               name="view-dashboard"
@@ -37,36 +38,26 @@ export default function TabLayout() {
           ),
         }}
       />
-      <Tabs.Screen
-        name="live-tracking"
-        options={{
-          title: 'Suivi',
-          tabBarIcon: ({ size, color }) => (
-            <MaterialCommunityIcons
-              name="map-marker-path"
-              size={size}
-              color={color}
-            />
-          ),
-        }}
-      />
+      {/* Nouvelle page de gestion des réservations style Excel */}
       <Tabs.Screen
         name="reservations"
         options={{
           title: 'Réservations',
           tabBarIcon: ({ size, color }) => (
             <MaterialCommunityIcons
-              name="calendar-multiple"
+              name="format-list-bulleted"
               size={size}
               color={color}
             />
           ),
         }}
       />
+
+      {/* Ajouter une réservation */}
       <Tabs.Screen
         name="add-reservation"
         options={{
-          title: 'Ajouter',
+          title: 'Nouvelle Résa',
           tabBarIcon: ({ size, color }) => (
             <MaterialCommunityIcons
               name="plus-circle"
@@ -76,6 +67,8 @@ export default function TabLayout() {
           ),
         }}
       />
+
+      {/* Statistiques et rapports */}
       <Tabs.Screen
         name="statistics"
         options={{
@@ -89,6 +82,8 @@ export default function TabLayout() {
           ),
         }}
       />
+
+      {/* Paramètres */}
       <Tabs.Screen
         name="settings"
         options={{

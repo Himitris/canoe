@@ -1,86 +1,118 @@
 import React, { useState, useCallback } from 'react';
-import { View, FlatList, StyleSheet, RefreshControl } from 'react-native';
 import {
-  Card,
+  View,
+  FlatList,
+  StyleSheet,
+  RefreshControl,
+  Alert,
+  Dimensions,
+  TouchableOpacity,
+} from 'react-native';
+import {
   Text,
-  Chip,
+  Surface,
   IconButton,
-  FAB,
   Searchbar,
   useTheme,
   Menu,
+  Divider,
+  Button,
+  Chip,
 } from 'react-native-paper';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { format } from 'date-fns';
+import {
+  format,
+  addDays,
+  subDays,
+  parseISO,
+  differenceInMinutes,
+} from 'date-fns';
 import { fr } from 'date-fns/locale';
 import { useDatabase } from '../../components/database/DatabaseProvider';
 import { Reservation } from '../../services/DatabaseService';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 
-const statusColors = {
-  pending: '#FF9800',
-  on_water: '#4CAF50',
-  completed: '#9E9E9E',
-  canceled: '#F44336',
-};
+interface ReservationWithStatus extends Reservation {
+  isLate?: boolean;
+  lateMinutes?: number;
+  timeAlert?: {
+    type: 'early_afternoon' | 'overtime_morning' | 'wrong_timeslot';
+    message: string;
+    severity: 'warning' | 'error';
+  };
+}
 
-const statusLabels = {
-  pending: 'En attente',
-  on_water: "Sur l'eau",
-  completed: 'Terminé',
-  canceled: 'Annulé',
-};
+const { width } = Dimensions.get('window');
 
-const timeSlotLabels = {
-  morning: 'Matin',
-  afternoon: 'Après-midi',
-  full_day: 'Journée complète',
-};
-
-export default function Reservations() {
+export default function ReservationsManager() {
   const { db, isReady } = useDatabase();
   const theme = useTheme();
   const router = useRouter();
-  const [reservations, setReservations] = useState<Reservation[]>([]);
-  const [filteredReservations, setFilteredReservations] = useState<
-    Reservation[]
+  const [allReservations, setAllReservations] = useState<
+    ReservationWithStatus[]
   >([]);
-  const [refreshing, setRefreshing] = useState(false);
+  const [filteredReservations, setFilteredReservations] = useState<
+    ReservationWithStatus[]
+  >([]);
+  const [selectedDate, setSelectedDate] = useState(
+    format(new Date(), 'yyyy-MM-dd')
+  );
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [refreshing, setRefreshing] = useState(false);
   const [menuVisible, setMenuVisible] = useState<{ [key: number]: boolean }>(
     {}
   );
+  const [selectedStatus, setSelectedStatus] = useState('all');
 
   const loadReservations = async () => {
     if (!db) return;
 
     try {
-      const data = await db.getReservations();
-      setReservations(data);
-      filterReservations(data, searchQuery, statusFilter);
+      // Utiliser la nouvelle méthode qui inclut les alertes temporelles
+      const reservationsData = await db.getReservationsWithTimeAlerts(
+        selectedDate
+      );
+
+      setAllReservations(reservationsData);
+      // Appliquer les filtres après avoir chargé toutes les réservations
+      applyFilters(reservationsData, searchQuery, selectedStatus);
     } catch (error) {
-      console.error('Erreur lors du chargement des réservations:', error);
+      console.error('Erreur lors du chargement des données:', error);
     }
   };
 
-  const filterReservations = (
-    data: Reservation[],
-    query: string,
+  const applyFilters = (
+    data: ReservationWithStatus[],
+    search: string,
     status: string
   ) => {
-    let filtered = data;
+    let filtered = [...data];
 
-    if (status !== 'all') {
-      filtered = filtered.filter((r) => r.status === status);
-    }
-
-    if (query.trim()) {
-      const searchLower = query.toLowerCase();
-      filtered = filtered.filter(
-        (r) =>
-          r.name.toLowerCase().includes(searchLower) || r.date.includes(query)
+    // Filtrer par recherche
+    if (search.trim()) {
+      const searchLower = search.toLowerCase();
+      filtered = filtered.filter((r) =>
+        r.name.toLowerCase().includes(searchLower)
       );
     }
+
+    // Filtrer par statut
+    if (status !== 'all') {
+      if (status === 'late') {
+        filtered = filtered.filter((r) => r.isLate);
+      } else {
+        filtered = filtered.filter((r) => r.status === status);
+      }
+    }
+
+    // Tri : retards en premier, puis par heure
+    filtered.sort((a, b) => {
+      if (a.isLate && !b.isLate) return -1;
+      if (!a.isLate && b.isLate) return 1;
+      if (a.status === 'pending' && b.status !== 'pending') return -1;
+      if (a.status !== 'pending' && b.status === 'pending') return 1;
+      return a.arrival_time.localeCompare(b.arrival_time);
+    });
 
     setFilteredReservations(filtered);
   };
@@ -89,47 +121,74 @@ export default function Reservations() {
     setRefreshing(true);
     await loadReservations();
     setRefreshing(false);
-  }, [db]);
+  }, [selectedDate, db]);
 
   useFocusEffect(
     useCallback(() => {
       if (isReady) {
         loadReservations();
       }
-    }, [isReady, db])
+    }, [selectedDate, isReady, db])
   );
 
+  // Appliquer les filtres quand la recherche ou le statut change
   const handleSearch = (query: string) => {
     setSearchQuery(query);
-    filterReservations(reservations, query, statusFilter);
+    applyFilters(allReservations, query, selectedStatus);
   };
 
   const handleStatusFilter = (status: string) => {
-    setStatusFilter(status);
-    filterReservations(reservations, searchQuery, status);
+    setSelectedStatus(status);
+    applyFilters(allReservations, searchQuery, status);
   };
 
-  const updateReservationStatus = async (
+  // Navigation par dates
+  const navigateDate = (direction: 'prev' | 'next') => {
+    const currentDate = new Date(selectedDate);
+    const newDate =
+      direction === 'next' ? addDays(currentDate, 1) : subDays(currentDate, 1);
+    setSelectedDate(format(newDate, 'yyyy-MM-dd'));
+  };
+
+  const handleStatusChange = async (
     id: number,
-    status: Reservation['status']
+    newStatus: Reservation['status']
   ) => {
     if (!db) return;
 
     try {
-      // Utiliser les nouvelles méthodes spécialisées
-      if (status === 'on_water') {
+      if (newStatus === 'on_water') {
         await db.markReservationOnWater(id);
-      } else if (status === 'completed') {
+      } else if (newStatus === 'completed') {
         await db.markReservationCompleted(id);
       } else {
-        // Pour pending et canceled, utiliser l'ancienne méthode
-        await db.updateReservation(id, { status });
+        await db.updateReservation(id, { status: newStatus });
       }
-
       await loadReservations();
       setMenuVisible((prev) => ({ ...prev, [id]: false }));
     } catch (error) {
-      console.error('Erreur lors de la mise à jour du statut:', error);
+      console.error('Erreur lors du changement de statut:', error);
+      Alert.alert('Erreur', 'Impossible de mettre à jour le statut');
+    }
+  };
+
+  // Actions rapides (un clic pour passer à l'étape suivante)
+  const handleQuickAction = async (reservation: ReservationWithStatus) => {
+    if (!db) return;
+
+    switch (reservation.status) {
+      case 'pending':
+        await handleStatusChange(reservation.id!, 'on_water');
+        break;
+      case 'on_water':
+        await handleStatusChange(reservation.id!, 'completed');
+        break;
+      case 'completed':
+        // Déjà terminé, pas d'action rapide
+        break;
+      case 'canceled':
+        // Annulé, pas d'action rapide
+        break;
     }
   };
 
@@ -140,134 +199,285 @@ export default function Reservations() {
     }));
   };
 
-  const getDurationOnWater = (item: Reservation) => {
-    if (!item.departure_time) return null;
+  const getStatusInfo = (item: ReservationWithStatus) => {
+    // Priorité aux alertes temporelles pour les réservations sur l'eau
+    if (item.timeAlert && item.status === 'on_water') {
+      const isError = item.timeAlert.severity === 'error';
+      return {
+        color: '#FFFFFF',
+        bgColor: isError ? '#D32F2F' : '#FF6D00', // Rouge foncé pour erreur, orange foncé pour warning
+        icon: isError ? 'alert-octagon' : 'clock-alert',
+        text: isError ? 'ERREUR TEMPS' : 'ALERTE TEMPS',
+        nextAction: 'check-circle',
+        nextLabel: 'Terminer',
+      };
+    }
 
-    const departure = new Date(item.departure_time);
-    const now = item.return_time ? new Date(item.return_time) : new Date();
-    const diffMinutes = Math.floor(
-      (now.getTime() - departure.getTime()) / (1000 * 60)
-    );
+    // Retard classique (pour les réservations en attente)
+    if (item.isLate) {
+      return {
+        color: '#FFFFFF',
+        bgColor: '#D32F2F',
+        icon: 'alert-circle',
+        text: `RETARD ${item.lateMinutes}min`,
+        nextAction: 'sail-boat',
+        nextLabel: "Sur l'eau",
+      };
+    }
 
-    if (diffMinutes < 60) return `${diffMinutes}min`;
-    const hours = Math.floor(diffMinutes / 60);
-    const minutes = diffMinutes % 60;
-    return `${hours}h${minutes > 0 ? minutes.toString().padStart(2, '0') : ''}`;
+    // Statuts normaux
+    switch (item.status) {
+      case 'pending':
+        return {
+          color: '#FFFFFF',
+          bgColor: '#FF9800',
+          icon: 'clock-outline',
+          text: 'ATTENTE',
+          nextAction: 'sail-boat',
+          nextLabel: "Sur l'eau",
+        };
+      case 'on_water':
+        return {
+          color: '#FFFFFF',
+          bgColor: '#4CAF50',
+          icon: 'sail-boat',
+          text: "SUR L'EAU",
+          nextAction: 'check-circle',
+          nextLabel: 'Terminer',
+        };
+      case 'completed':
+        return {
+          color: '#FFFFFF',
+          bgColor: '#757575',
+          icon: 'check-circle',
+          text: 'TERMINÉ',
+          nextAction: null,
+          nextLabel: null,
+        };
+      case 'canceled':
+        return {
+          color: '#FFFFFF',
+          bgColor: '#F44336',
+          icon: 'close-circle',
+          text: 'ANNULÉ',
+          nextAction: null,
+          nextLabel: null,
+        };
+      default:
+        return {
+          color: '#FFFFFF',
+          bgColor: '#757575',
+          icon: 'help-circle',
+          text: 'INCONNU',
+          nextAction: null,
+          nextLabel: null,
+        };
+    }
   };
 
-  const renderReservationItem = ({ item }: { item: Reservation }) => (
-    <Card style={styles.reservationCard} mode="elevated">
-      <Card.Content>
-        <View style={styles.reservationHeader}>
-          <View style={styles.reservationInfo}>
-            <Text variant="headlineSmall" style={styles.customerName}>
-              {item.name}
-            </Text>
-            <Text variant="bodyMedium" style={styles.reservationDate}>
-              {format(new Date(item.date), 'dd MMM yyyy', { locale: fr })} •{' '}
-              {item.arrival_time}
-            </Text>
-            {item.status === 'on_water' && getDurationOnWater(item) && (
-              <Text
-                variant="bodySmall"
-                style={[styles.durationText, { color: theme.colors.primary }]}
-              >
-                Sur l'eau depuis {getDurationOnWater(item)}
-              </Text>
-            )}
-          </View>
-          <Menu
-            visible={menuVisible[item.id!] || false}
-            onDismiss={() => toggleMenu(item.id!)}
-            anchor={
-              <IconButton
-                icon="dots-vertical"
-                size={20}
-                onPress={() => toggleMenu(item.id!)}
-              />
-            }
-          >
-            <Menu.Item
-              onPress={() => updateReservationStatus(item.id!, 'pending')}
-              title="Marquer en attente"
-              leadingIcon="clock-outline"
-            />
-            <Menu.Item
-              onPress={() => updateReservationStatus(item.id!, 'on_water')}
-              title="Marquer sur l'eau"
-              leadingIcon="sail-boat"
-            />
-            <Menu.Item
-              onPress={() => updateReservationStatus(item.id!, 'completed')}
-              title="Marquer terminé"
-              leadingIcon="check-circle"
-            />
-            <Menu.Item
-              onPress={() => updateReservationStatus(item.id!, 'canceled')}
-              title="Annuler"
-              leadingIcon="close"
-            />
-          </Menu>
-        </View>
-
-        <View style={styles.reservationDetails}>
-          <View style={styles.detailRow}>
-            <Text variant="bodySmall" style={styles.detailLabel}>
-              Personnes :
-            </Text>
-            <Text variant="bodyMedium" style={styles.detailValue}>
-              {item.nb_people}
-            </Text>
-          </View>
-
-          <View style={styles.detailRow}>
-            <Text variant="bodySmall" style={styles.detailLabel}>
-              Canoës :
-            </Text>
-            <Text variant="bodyMedium" style={styles.detailValue}>
-              {item.single_canoes} simple(s), {item.double_canoes} double(s)
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.chipContainer}>
-          <Chip
-            mode="outlined"
-            textStyle={{ color: statusColors[item.status] }}
-            style={{ borderColor: statusColors[item.status] }}
-          >
-            {statusLabels[item.status]}
-          </Chip>
-          <Chip mode="outlined" textStyle={{ color: theme.colors.primary }}>
-            {timeSlotLabels[item.timeslot]}
-          </Chip>
-        </View>
-      </Card.Content>
-    </Card>
-  );
-
-  const renderFilterChips = () => (
-    <View style={styles.filterContainer}>
-      {['all', 'pending', 'on_water', 'completed', 'canceled'].map((status) => (
-        <Chip
-          key={status}
-          selected={statusFilter === status}
-          onPress={() => handleStatusFilter(status)}
-          style={[
-            styles.filterChip,
-            statusFilter === status && {
-              backgroundColor: theme.colors.primary,
-            },
-          ]}
-          textStyle={[statusFilter === status && { color: 'white' }]}
-        >
-          {status === 'all'
-            ? 'Toutes'
-            : statusLabels[status as keyof typeof statusLabels]}
-        </Chip>
-      ))}
+  const renderHeaderRow = () => (
+    <View style={styles.headerContainer}>
+      <View style={styles.headerRow}>
+        <Text style={styles.headerTitle}>RÉSERVATIONS</Text>
+        <Text style={styles.headerSubtitle}>
+          {filteredReservations.length} sur {allReservations.length}{' '}
+          réservations
+        </Text>
+      </View>
     </View>
   );
+
+  const renderReservationRow = ({
+    item,
+    index,
+  }: {
+    item: ReservationWithStatus;
+    index: number;
+  }) => {
+    const statusInfo = getStatusInfo(item);
+    const isEven = index % 2 === 0;
+
+    return (
+      <TouchableOpacity
+        style={[
+          styles.compactCard,
+          { backgroundColor: isEven ? '#FAFAFA' : 'white' },
+        ]}
+        activeOpacity={0.7}
+      >
+        {/* Ligne 1: Nom + Heure + Statut principal */}
+        <View style={styles.topRow}>
+          <View style={styles.nameSection}>
+            <Text style={styles.compactName} numberOfLines={1}>
+              {item.name}
+            </Text>
+            <Text style={styles.compactTime}>{item.arrival_time}</Text>
+          </View>
+
+          <TouchableOpacity
+            style={[
+              styles.compactStatus,
+              { backgroundColor: statusInfo.bgColor },
+            ]}
+            onPress={() => statusInfo.nextAction && handleQuickAction(item)}
+            disabled={!statusInfo.nextAction}
+          >
+            <MaterialCommunityIcons
+              name={statusInfo.icon as any}
+              size={12}
+              color={statusInfo.color}
+            />
+            <Text
+              style={[styles.compactStatusText, { color: statusInfo.color }]}
+            >
+              {statusInfo.text}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Ligne 2: Détails compacts + Actions */}
+        <View style={styles.bottomRow}>
+          <View style={styles.compactDetails}>
+            <Text style={styles.detailItem}>
+              <MaterialCommunityIcons
+                name="account"
+                size={12}
+                color="#1976D2"
+              />{' '}
+              {item.nb_people}p
+            </Text>
+            <Text style={styles.detailSeparator}>•</Text>
+            <Text style={styles.detailItem}>
+              {item.single_canoes}S+{item.double_canoes}D
+            </Text>
+            <Text style={styles.detailSeparator}>•</Text>
+            <Text style={styles.detailItem}>
+              {item.timeslot === 'morning'
+                ? 'Mat'
+                : item.timeslot === 'afternoon'
+                ? 'Apr'
+                : 'Jour'}
+            </Text>
+            {item.isLate && (
+              <>
+                <Text style={styles.detailSeparator}>•</Text>
+                <Text style={styles.lateDetail}>
+                  <MaterialCommunityIcons
+                    name="alert"
+                    size={12}
+                    color="#D32F2F"
+                  />{' '}
+                  +{item.lateMinutes}min
+                </Text>
+              </>
+            )}
+            {item.timeAlert && (
+              <>
+                <Text style={styles.detailSeparator}>•</Text>
+                <Text
+                  style={[
+                    styles.timeAlertDetail,
+                    {
+                      color:
+                        item.timeAlert.severity === 'error'
+                          ? '#D32F2F'
+                          : '#FF6D00',
+                    },
+                  ]}
+                >
+                  <MaterialCommunityIcons
+                    name={
+                      item.timeAlert.severity === 'error'
+                        ? 'alert-octagon'
+                        : 'clock-alert'
+                    }
+                    size={12}
+                    color={
+                      item.timeAlert.severity === 'error'
+                        ? '#D32F2F'
+                        : '#FF6D00'
+                    }
+                  />{' '}
+                  {item.timeAlert.message}
+                </Text>
+              </>
+            )}
+          </View>
+
+          <View style={styles.compactActions}>
+            {/* Action rapide */}
+            {statusInfo.nextAction && (
+              <TouchableOpacity
+                style={[
+                  styles.compactActionBtn,
+                  { backgroundColor: statusInfo.bgColor },
+                ]}
+                onPress={() => handleQuickAction(item)}
+              >
+                <MaterialCommunityIcons
+                  name={statusInfo.nextAction as any}
+                  size={16}
+                  color="white"
+                />
+              </TouchableOpacity>
+            )}
+
+            {/* Menu compact */}
+            <Menu
+              visible={menuVisible[item.id!] || false}
+              onDismiss={() => toggleMenu(item.id!)}
+              anchor={
+                <TouchableOpacity
+                  style={styles.compactMenuBtn}
+                  onPress={() => toggleMenu(item.id!)}
+                >
+                  <MaterialCommunityIcons
+                    name="dots-vertical"
+                    size={16}
+                    color="#666"
+                  />
+                </TouchableOpacity>
+              }
+            >
+              <Menu.Item
+                onPress={() => handleStatusChange(item.id!, 'pending')}
+                title="⏳ Remettre en attente"
+                leadingIcon="clock-outline"
+              />
+              <Menu.Item
+                onPress={() => handleStatusChange(item.id!, 'on_water')}
+                title="⛵ Mettre sur l'eau"
+                leadingIcon="sail-boat"
+              />
+              <Menu.Item
+                onPress={() => handleStatusChange(item.id!, 'completed')}
+                title="✅ Marquer terminé"
+                leadingIcon="check-circle"
+              />
+              <Divider />
+              <Menu.Item
+                onPress={() => handleStatusChange(item.id!, 'canceled')}
+                title="❌ Annuler"
+                leadingIcon="close"
+                titleStyle={{ color: '#F44336' }}
+              />
+            </Menu>
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  const getStatusCounts = () => {
+    // Compter sur TOUTES les réservations du jour, pas seulement les filtrées
+    return {
+      all: allReservations.length,
+      pending: allReservations.filter((r) => r.status === 'pending').length,
+      on_water: allReservations.filter((r) => r.status === 'on_water').length,
+      completed: allReservations.filter((r) => r.status === 'completed').length,
+      late: allReservations.filter((r) => r.isLate).length,
+    };
+  };
 
   if (!isReady) {
     return (
@@ -277,54 +487,180 @@ export default function Reservations() {
     );
   }
 
+  const statusCounts = getStatusCounts();
+
   return (
     <View style={styles.container}>
-      <View style={styles.searchContainer}>
+      {/* En-tête avec navigation de date */}
+      <Surface style={styles.header} elevation={4}>
+        <View style={styles.headerTop}>
+          <IconButton
+            icon="chevron-left"
+            size={24}
+            iconColor="#1976D2"
+            onPress={() => navigateDate('prev')}
+          />
+          <View style={styles.headerCenter}>
+            <Text style={styles.headerTitle}>GESTION RÉSERVATIONS</Text>
+            <Text style={styles.headerDate}>
+              {format(new Date(selectedDate), 'EEEE dd MMMM yyyy', {
+                locale: fr,
+              }).toUpperCase()}
+            </Text>
+          </View>
+          <IconButton
+            icon="chevron-right"
+            size={24}
+            iconColor="#1976D2"
+            onPress={() => navigateDate('next')}
+          />
+        </View>
+
+        {/* Métriques rapides */}
+        <View style={styles.metricsRow}>
+          <View style={styles.metric}>
+            <Text style={styles.metricNumber}>{statusCounts.all}</Text>
+            <Text style={styles.metricLabel}>TOTAL</Text>
+          </View>
+          <Divider style={styles.metricDivider} />
+          <View style={styles.metric}>
+            <Text
+              style={[
+                styles.metricNumber,
+                { color: statusCounts.late > 0 ? '#D32F2F' : '#757575' },
+              ]}
+            >
+              {statusCounts.late}
+            </Text>
+            <Text style={styles.metricLabel}>RETARDS</Text>
+          </View>
+          <Divider style={styles.metricDivider} />
+          <View style={styles.metric}>
+            <Text style={[styles.metricNumber, { color: '#4CAF50' }]}>
+              {statusCounts.on_water}
+            </Text>
+            <Text style={styles.metricLabel}>SUR L'EAU</Text>
+          </View>
+          <Divider style={styles.metricDivider} />
+          <View style={styles.metric}>
+            <Text style={[styles.metricNumber, { color: '#FF9800' }]}>
+              {statusCounts.pending}
+            </Text>
+            <Text style={styles.metricLabel}>ATTENTE</Text>
+          </View>
+        </View>
+      </Surface>
+
+      {/* Contrôles de recherche et filtres */}
+      <View style={styles.controlsContainer}>
         <Searchbar
-          placeholder="Rechercher par nom ou date..."
+          placeholder="Rechercher un client..."
           onChangeText={handleSearch}
           value={searchQuery}
           style={styles.searchbar}
+          inputStyle={styles.searchInput}
+          iconColor="#1976D2"
         />
+
+        <View style={styles.filtersRow}>
+          {[
+            {
+              key: 'all',
+              label: 'TOUTES',
+              count: statusCounts.all,
+              color: '#1976D2',
+            },
+            {
+              key: 'late',
+              label: 'RETARDS',
+              count: statusCounts.late,
+              color: '#D32F2F',
+            },
+            {
+              key: 'pending',
+              label: 'ATTENTE',
+              count: statusCounts.pending,
+              color: '#FF9800',
+            },
+            {
+              key: 'on_water',
+              label: "SUR L'EAU",
+              count: statusCounts.on_water,
+              color: '#4CAF50',
+            },
+            {
+              key: 'completed',
+              label: 'TERMINÉ',
+              count: statusCounts.completed,
+              color: '#757575',
+            },
+          ].map((filter) => (
+            <Chip
+              key={filter.key}
+              selected={selectedStatus === filter.key}
+              onPress={() => handleStatusFilter(filter.key)}
+              compact
+              style={[
+                styles.filterChip,
+                selectedStatus === filter.key && {
+                  backgroundColor: filter.color,
+                },
+              ]}
+              textStyle={[
+                styles.filterChipText,
+                selectedStatus === filter.key && { color: 'white' },
+              ]}
+            >
+              {filter.label} ({filter.count})
+            </Chip>
+          ))}
+        </View>
       </View>
 
-      {renderFilterChips()}
-
+      {/* Tableau style Excel */}
       <FlatList
         data={filteredReservations}
-        renderItem={renderReservationItem}
+        ListHeaderComponent={renderHeaderRow}
+        renderItem={renderReservationRow}
         keyExtractor={(item) => item.id!.toString()}
-        contentContainerStyle={styles.listContainer}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
+        style={styles.table}
         showsVerticalScrollIndicator={false}
         removeClippedSubviews={true}
-        maxToRenderPerBatch={10}
+        maxToRenderPerBatch={25}
         windowSize={10}
-        initialNumToRender={10}
+        initialNumToRender={20}
         getItemLayout={(data, index) => ({
-          length: 150,
-          offset: 150 * index,
+          length: 60, // Hauteur réduite pour plus d'efficacité
+          offset: 60 * index,
           index,
         })}
         ListEmptyComponent={() => (
           <View style={styles.emptyContainer}>
-            <Text variant="bodyLarge" style={styles.emptyText}>
-              {searchQuery || statusFilter !== 'all'
-                ? 'Aucune réservation ne correspond aux filtres'
-                : 'Aucune réservation trouvée'}
+            <MaterialCommunityIcons
+              name="calendar-blank"
+              size={64}
+              color="#BDBDBD"
+            />
+            <Text style={styles.emptyTitle}>Aucune réservation</Text>
+            <Text style={styles.emptyText}>
+              {searchQuery || selectedStatus !== 'all'
+                ? 'Aucune réservation correspondante'
+                : "Aucune réservation aujourd'hui"}
             </Text>
           </View>
         )}
       />
 
-      <FAB
-        icon="plus"
+      {/* Bouton flottant pour ajouter */}
+      <TouchableOpacity
         style={styles.fab}
         onPress={() => router.push('/add-reservation')}
-        label="Réserver"
-      />
+      >
+        <MaterialCommunityIcons name="plus" size={24} color="white" />
+      </TouchableOpacity>
     </View>
   );
 }
@@ -332,93 +668,245 @@ export default function Reservations() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FAFAFA',
+    backgroundColor: '#F5F5F5',
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#F5F5F5',
   },
-  searchContainer: {
-    padding: 16,
-    paddingBottom: 8,
-  },
-  searchbar: {
+  header: {
     backgroundColor: 'white',
-  },
-  filterContainer: {
-    flexDirection: 'row',
     paddingHorizontal: 16,
+    paddingTop: 12,
     paddingBottom: 8,
-    gap: 8,
   },
-  filterChip: {
-    marginRight: 4,
-  },
-  listContainer: {
-    padding: 16,
-    paddingBottom: 80,
-  },
-  reservationCard: {
-    marginBottom: 12,
-    backgroundColor: 'white',
-  },
-  reservationHeader: {
+  headerTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 12,
-  },
-  reservationInfo: {
-    flex: 1,
-  },
-  customerName: {
-    fontWeight: 'bold',
-    marginBottom: 4,
-  },
-  reservationDate: {
-    color: '#666',
-  },
-  durationText: {
-    fontWeight: '600',
-    fontSize: 12,
-    marginTop: 4,
-  },
-  reservationDetails: {
-    marginBottom: 12,
-    gap: 4,
-  },
-  detailRow: {
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    marginBottom: 12,
   },
-  detailLabel: {
-    color: '#666',
-    minWidth: 60,
+  headerCenter: {
+    flex: 1,
+    alignItems: 'center',
   },
-  detailValue: {
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#1976D2',
+    letterSpacing: 0.5,
+  },
+  headerDate: {
+    fontSize: 11,
+    color: '#757575',
+    marginTop: 2,
     fontWeight: '500',
   },
-  chipContainer: {
+  metricsRow: {
     flexDirection: 'row',
-    gap: 8,
+    alignItems: 'center',
+    paddingVertical: 8,
   },
-  emptyContainer: {
+  metric: {
     flex: 1,
+    alignItems: 'center',
+  },
+  metricNumber: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#1976D2',
+  },
+  metricLabel: {
+    fontSize: 9,
+    color: '#757575',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  metricDivider: {
+    height: 30,
+    width: 1,
+  },
+  controlsContainer: {
+    backgroundColor: 'white',
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    elevation: 2,
+  },
+  searchbar: {
+    backgroundColor: '#F8F9FA',
+    elevation: 0,
+    marginBottom: 12,
+    height: 40,
+  },
+  searchInput: {
+    fontSize: 14,
+    minHeight: 0,
+  },
+  filtersRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  filterChip: {
+    backgroundColor: '#F8F9FA',
+    height: 28,
+  },
+  filterChipText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#757575',
+  },
+  table: {
+    flex: 1,
+    backgroundColor: 'white',
+  },
+  headerContainer: {
+    backgroundColor: '#1976D2',
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+  },
+  headerRow: {
+    alignItems: 'center',
+  },
+  headerTitle: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '800',
+    textAlign: 'center',
+    letterSpacing: 0.5,
+  },
+  headerSubtitle: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 12,
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  compactCard: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+    minHeight: 60,
+  },
+  topRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  nameSection: {
+    flex: 1,
+    marginRight: 8,
+  },
+  compactName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#212121',
+    marginBottom: 1,
+  },
+  compactTime: {
+    fontSize: 12,
+    color: '#666',
+    fontWeight: '500',
+  },
+  compactStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    gap: 4,
+    minWidth: 70,
+    justifyContent: 'center',
+  },
+  compactStatusText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  bottomRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  compactDetails: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 6,
+  },
+  detailItem: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#666',
+  },
+  detailSeparator: {
+    fontSize: 11,
+    color: '#CCC',
+    fontWeight: '400',
+  },
+  lateDetail: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#D32F2F',
+  },
+  timeAlertDetail: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  compactActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  compactActionBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 50,
+    elevation: 2,
+  },
+  compactMenuBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F5F5F5',
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    paddingVertical: 80,
+    paddingHorizontal: 32,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#757575',
+    marginTop: 16,
+    marginBottom: 8,
   },
   emptyText: {
-    color: '#666',
+    fontSize: 14,
+    color: '#9E9E9E',
     textAlign: 'center',
   },
   fab: {
     position: 'absolute',
-    margin: 16,
-    right: 0,
-    bottom: 0,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     backgroundColor: '#1976D2',
+    justifyContent: 'center',
+    alignItems: 'center',
+    right: 16,
+    bottom: 16,
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
   },
 });

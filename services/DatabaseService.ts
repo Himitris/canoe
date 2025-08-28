@@ -1,4 +1,5 @@
 import * as SQLite from 'expo-sqlite';
+import { format } from 'date-fns';
 
 export interface Reservation {
   id?: number;
@@ -32,6 +33,10 @@ export interface Settings {
   total_double_canoes: number;
   auto_backup_enabled: boolean;
   last_backup_date?: string;
+  morning_start_time?: string; // Format HH:MM, ex: "09:00"
+  morning_end_time?: string; // Format HH:MM, ex: "13:00"
+  afternoon_start_time?: string; // Format HH:MM, ex: "14:00"
+  afternoon_end_time?: string; // Format HH:MM, ex: "18:00"
 }
 
 export interface DailyStats {
@@ -145,6 +150,10 @@ export class DatabaseService {
         total_double_canoes INTEGER DEFAULT 5,
         auto_backup_enabled BOOLEAN DEFAULT 1,
         last_backup_date DATETIME,
+        morning_start_time TEXT DEFAULT '09:00',
+        morning_end_time TEXT DEFAULT '13:00',
+        afternoon_start_time TEXT DEFAULT '14:00',
+        afternoon_end_time TEXT DEFAULT '18:00',
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
     `);
@@ -262,9 +271,27 @@ export class DatabaseService {
     );
     if (result && (result as any).count === 0) {
       await this.db.runAsync(
-        'INSERT INTO settings (total_single_canoes, total_double_canoes, auto_backup_enabled) VALUES (?, ?, ?)',
-        [10, 5, 1]
+        'INSERT INTO settings (total_single_canoes, total_double_canoes, auto_backup_enabled, morning_start_time, morning_end_time, afternoon_start_time, afternoon_end_time) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [10, 5, 1, '09:00', '13:00', '14:00', '18:00']
       );
+    } else {
+      // Migration pour ajouter les nouvelles colonnes si elles n'existent pas
+      try {
+        await this.db.runAsync(
+          'ALTER TABLE settings ADD COLUMN morning_start_time TEXT DEFAULT "09:00"'
+        );
+        await this.db.runAsync(
+          'ALTER TABLE settings ADD COLUMN morning_end_time TEXT DEFAULT "13:00"'
+        );
+        await this.db.runAsync(
+          'ALTER TABLE settings ADD COLUMN afternoon_start_time TEXT DEFAULT "14:00"'
+        );
+        await this.db.runAsync(
+          'ALTER TABLE settings ADD COLUMN afternoon_end_time TEXT DEFAULT "18:00"'
+        );
+      } catch (e) {
+        // Les colonnes existent déjà
+      }
     }
   }
 
@@ -374,6 +401,220 @@ export class DatabaseService {
       console.error('Erreur lors de la mise à jour du statut:', error);
       throw error;
     }
+  }
+
+  async markReservationArrived(id: number): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized');
+    const currentTime = new Date().toISOString();
+
+    try {
+      const reservation = await this.getReservation(id);
+      if (!reservation) {
+        throw new Error('Reservation not found');
+      }
+
+      await this.db.runAsync(
+        `
+        UPDATE reservations
+        SET actual_arrival_time = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `,
+        [currentTime, id]
+      );
+
+      await this.addReservationHistory(
+        id,
+        'actual_arrival_time',
+        reservation.actual_arrival_time || 'null',
+        currentTime
+      );
+    } catch (error) {
+      console.error('Erreur lors du marquage arrivé:', error);
+      throw new Error('Impossible de marquer la réservation comme arrivée');
+    }
+  }
+
+  async getArrivedReservations(date: string): Promise<Reservation[]> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    const result = await this.db.getAllAsync(
+      `
+      SELECT * FROM reservations
+      WHERE date = ? 
+      AND status = 'pending'
+      AND actual_arrival_time IS NOT NULL
+      ORDER BY actual_arrival_time ASC
+    `,
+      [date]
+    );
+
+    return result as Reservation[];
+  }
+
+  async getDetailedStats(date: string): Promise<{
+    total: number;
+    pending: number;
+    arrived: number;
+    on_water: number;
+    completed: number;
+    canceled: number;
+    late: number;
+  }> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    const reservations = await this.getReservations(date);
+    const now = new Date();
+
+    const stats = {
+      total: reservations.length,
+      pending: 0,
+      arrived: 0,
+      on_water: 0,
+      completed: 0,
+      canceled: 0,
+      late: 0,
+    };
+
+    reservations.forEach((reservation) => {
+      // Compter par statut
+      stats[reservation.status as keyof typeof stats]++;
+
+      // Compter les arrivés (pending avec actual_arrival_time)
+      if (reservation.status === 'pending' && reservation.actual_arrival_time) {
+        stats.arrived++;
+        stats.pending--; // Ajuster car ils ne sont plus vraiment "pending"
+      }
+
+      // Compter les retards
+      if (
+        reservation.status === 'pending' &&
+        !reservation.actual_arrival_time
+      ) {
+        const expectedTime = new Date(
+          `${reservation.date}T${reservation.arrival_time}:00`
+        );
+        if (now > expectedTime) {
+          stats.late++;
+        }
+      }
+    });
+
+    return stats;
+  }
+
+  async searchReservationsWithFilters(params: {
+    date?: string;
+    status?: string;
+    query?: string;
+    includeArrived?: boolean;
+  }): Promise<Reservation[]> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    let query = 'SELECT * FROM reservations WHERE 1=1';
+    const queryParams: any[] = [];
+
+    if (params.date) {
+      query += ' AND date = ?';
+      queryParams.push(params.date);
+    }
+
+    if (params.status && params.status !== 'all') {
+      if (params.status === 'arrived') {
+        query += " AND status = 'pending' AND actual_arrival_time IS NOT NULL";
+      } else if (params.status === 'late') {
+        query += " AND status = 'pending' AND actual_arrival_time IS NULL";
+        // Note: La logique de retard sera appliquée côté client avec la date/heure actuelle
+      } else {
+        query += ' AND status = ?';
+        queryParams.push(params.status);
+      }
+    }
+
+    if (params.query && params.query.trim()) {
+      query += ' AND (name LIKE ? OR date LIKE ?)';
+      const searchPattern = `%${params.query}%`;
+      queryParams.push(searchPattern, searchPattern);
+    }
+
+    query += ' ORDER BY date DESC, arrival_time ASC';
+
+    const result = await this.db.getAllAsync(query, queryParams);
+    return result as Reservation[];
+  }
+
+  async getDailySummary(date: string): Promise<{
+    reservations: {
+      total: number;
+      pending: number;
+      arrived: number;
+      on_water: number;
+      completed: number;
+      late: number;
+    };
+    canoes: {
+      morning: {
+        single_used: number;
+        double_used: number;
+        single_free: number;
+        double_free: number;
+      };
+      afternoon: {
+        single_used: number;
+        double_used: number;
+        single_free: number;
+        double_free: number;
+      };
+    };
+    capacity: {
+      total_people: number;
+      current_on_water: number;
+    };
+  }> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    const [stats, availability, reservations] = await Promise.all([
+      this.getDetailedStats(date),
+      this.getAvailability(date),
+      this.getReservations(date),
+    ]);
+
+    const onWaterReservations = reservations.filter(
+      (r) => r.status === 'on_water'
+    );
+    const currentOnWater = onWaterReservations.reduce(
+      (sum, r) => sum + r.nb_people,
+      0
+    );
+    const totalPeople = reservations
+      .filter((r) => r.status !== 'canceled')
+      .reduce((sum, r) => sum + r.nb_people, 0);
+
+    return {
+      reservations: stats,
+      canoes: {
+        morning: {
+          single_used:
+            availability.morning.total_single - availability.morning.single,
+          double_used:
+            availability.morning.total_double - availability.morning.double,
+          single_free: availability.morning.single,
+          double_free: availability.morning.double,
+        },
+        afternoon: {
+          single_used:
+            availability.afternoon.total_single - availability.afternoon.single,
+          double_used:
+            availability.afternoon.total_double - availability.afternoon.double,
+          single_free: availability.afternoon.single,
+          double_free: availability.afternoon.double,
+        },
+      },
+      capacity: {
+        total_people: totalPeople,
+        current_on_water: currentOnWater,
+      },
+    };
   }
 
   async getReservationsByStatus(
@@ -659,64 +900,65 @@ export class DatabaseService {
     };
   }> {
     if (!this.db) throw new Error('Database not initialized');
+
     const settings = await this.getSettings();
     const reservations = await this.getReservations(date);
+
+    // Filtrer seulement les réservations actives (pas annulées)
     const activeReservations = reservations.filter(
       (r) => r.status === 'pending' || r.status === 'on_water'
     );
+
+    // Calculer les canoës utilisés par créneau
     let morningUsed = { single: 0, double: 0 };
     let afternoonUsed = { single: 0, double: 0 };
+
     activeReservations.forEach((reservation) => {
       if (reservation.timeslot === 'morning') {
+        // Réservation matin seulement
         morningUsed.single += reservation.single_canoes;
         morningUsed.double += reservation.double_canoes;
       } else if (reservation.timeslot === 'afternoon') {
+        // Réservation après-midi seulement
         afternoonUsed.single += reservation.single_canoes;
         afternoonUsed.double += reservation.double_canoes;
       } else if (reservation.timeslot === 'full_day') {
+        // Réservation journée complète - bloque les deux créneaux
         morningUsed.single += reservation.single_canoes;
         morningUsed.double += reservation.double_canoes;
         afternoonUsed.single += reservation.single_canoes;
         afternoonUsed.double += reservation.double_canoes;
       }
     });
+
+    // Calculer la disponibilité pour chaque créneau
+    const morning = {
+      single: Math.max(0, settings.total_single_canoes - morningUsed.single),
+      double: Math.max(0, settings.total_double_canoes - morningUsed.double),
+      total_single: settings.total_single_canoes,
+      total_double: settings.total_double_canoes,
+    };
+
+    const afternoon = {
+      single: Math.max(0, settings.total_single_canoes - afternoonUsed.single),
+      double: Math.max(0, settings.total_double_canoes - afternoonUsed.double),
+      total_single: settings.total_single_canoes,
+      total_double: settings.total_double_canoes,
+    };
+
+    // Pour les réservations journée complète, on ne peut prendre que
+    // le minimum entre ce qui reste le matin ET l'après-midi
+    const full_day = {
+      single: Math.min(morning.single, afternoon.single),
+      double: Math.min(morning.double, afternoon.double),
+      total_single: settings.total_single_canoes,
+      total_double: settings.total_double_canoes,
+    };
+
     return {
-      morning: {
-        single: Math.max(0, settings.total_single_canoes - morningUsed.single),
-        double: Math.max(0, settings.total_double_canoes - morningUsed.double),
-        total_single: settings.total_single_canoes,
-        total_double: settings.total_double_canoes,
-      },
-      afternoon: {
-        single: Math.max(
-          0,
-          settings.total_single_canoes - afternoonUsed.single
-        ),
-        double: Math.max(
-          0,
-          settings.total_double_canoes - afternoonUsed.double
-        ),
-        total_single: settings.total_single_canoes,
-        total_double: settings.total_double_canoes,
-      },
-      full_day: {
-        single: Math.max(
-          0,
-          Math.min(
-            settings.total_single_canoes - morningUsed.single,
-            settings.total_single_canoes - afternoonUsed.single
-          )
-        ),
-        double: Math.max(
-          0,
-          Math.min(
-            settings.total_double_canoes - morningUsed.double,
-            settings.total_double_canoes - afternoonUsed.double
-          )
-        ),
-        total_single: settings.total_single_canoes,
-        total_double: settings.total_double_canoes,
-      },
+      morning,
+      afternoon,
+      full_day,
     };
   }
 
@@ -775,7 +1017,81 @@ export class DatabaseService {
     excludeId?: number
   ): Promise<{ isOverbooked: boolean; message?: string }> {
     if (!this.db) throw new Error('Database not initialized');
+
     const availability = await this.getAvailability(date);
+
+    // Si on modifie une réservation existante, on doit la soustraire du calcul actuel
+    if (excludeId) {
+      const currentReservation = await this.getReservation(excludeId);
+      if (currentReservation && currentReservation.date === date) {
+        // Remettre les canoës de cette réservation dans le pool disponible
+        const settings = await this.getSettings();
+
+        if (currentReservation.timeslot === 'morning') {
+          availability.morning.single = Math.min(
+            settings.total_single_canoes,
+            availability.morning.single + currentReservation.single_canoes
+          );
+          availability.morning.double = Math.min(
+            settings.total_double_canoes,
+            availability.morning.double + currentReservation.double_canoes
+          );
+          // Recalculer full_day
+          availability.full_day.single = Math.min(
+            availability.morning.single,
+            availability.afternoon.single
+          );
+          availability.full_day.double = Math.min(
+            availability.morning.double,
+            availability.afternoon.double
+          );
+        } else if (currentReservation.timeslot === 'afternoon') {
+          availability.afternoon.single = Math.min(
+            settings.total_single_canoes,
+            availability.afternoon.single + currentReservation.single_canoes
+          );
+          availability.afternoon.double = Math.min(
+            settings.total_double_canoes,
+            availability.afternoon.double + currentReservation.double_canoes
+          );
+          // Recalculer full_day
+          availability.full_day.single = Math.min(
+            availability.morning.single,
+            availability.afternoon.single
+          );
+          availability.full_day.double = Math.min(
+            availability.morning.double,
+            availability.afternoon.double
+          );
+        } else if (currentReservation.timeslot === 'full_day') {
+          availability.morning.single = Math.min(
+            settings.total_single_canoes,
+            availability.morning.single + currentReservation.single_canoes
+          );
+          availability.morning.double = Math.min(
+            settings.total_double_canoes,
+            availability.morning.double + currentReservation.double_canoes
+          );
+          availability.afternoon.single = Math.min(
+            settings.total_single_canoes,
+            availability.afternoon.single + currentReservation.single_canoes
+          );
+          availability.afternoon.double = Math.min(
+            settings.total_double_canoes,
+            availability.afternoon.double + currentReservation.double_canoes
+          );
+          availability.full_day.single = Math.min(
+            availability.morning.single,
+            availability.afternoon.single
+          );
+          availability.full_day.double = Math.min(
+            availability.morning.double,
+            availability.afternoon.double
+          );
+        }
+      }
+    }
+
     let availableSlot;
     switch (timeslot) {
       case 'morning':
@@ -790,35 +1106,30 @@ export class DatabaseService {
       default:
         return { isOverbooked: false };
     }
-    if (excludeId) {
-      const currentReservation = await this.getReservation(excludeId);
-      if (
-        currentReservation &&
-        currentReservation.date === date &&
-        currentReservation.timeslot === timeslot
-      ) {
-        availableSlot.single += currentReservation.single_canoes;
-        availableSlot.double += currentReservation.double_canoes;
-      }
-    }
+
     const singleOverbook = singleCanoes > availableSlot.single;
     const doubleOverbook = doubleCanoes > availableSlot.double;
+
     if (singleOverbook || doubleOverbook) {
-      let message = 'Overbooking detected: ';
+      let message = 'Surbooking détecté: ';
       const issues = [];
+
       if (singleOverbook) {
-        issues.push(
-          `${singleCanoes - availableSlot.single} extra single canoe(s)`
-        );
+        const excess = singleCanoes - availableSlot.single;
+        issues.push(`${excess} canoë(s) simple(s) en trop`);
       }
+
       if (doubleOverbook) {
-        issues.push(
-          `${doubleCanoes - availableSlot.double} extra double canoe(s)`
-        );
+        const excess = doubleCanoes - availableSlot.double;
+        issues.push(`${excess} canoë(s) double(s) en trop`);
       }
+
       message += issues.join(', ');
+      message += `. Disponible: ${availableSlot.single}S + ${availableSlot.double}D`;
+
       return { isOverbooked: true, message };
     }
+
     return { isOverbooked: false };
   }
 
@@ -909,6 +1220,173 @@ export class DatabaseService {
     const data = await this.exportData();
     await this.updateSettings({ last_backup_date: new Date().toISOString() });
     return data;
+  }
+
+  // Nouvelle méthode pour analyser les anomalies temporelles
+  async analyzeReservationTimeAlerts(
+    reservations: Reservation[],
+    currentDate: string
+  ): Promise<
+    Array<{
+      id: number;
+      alertType: 'early_afternoon' | 'overtime_morning' | 'wrong_timeslot';
+      message: string;
+      severity: 'warning' | 'error';
+    }>
+  > {
+    if (!this.db) throw new Error('Database not initialized');
+
+    const settings = await this.getSettings();
+    const now = new Date();
+    const alerts: Array<{
+      id: number;
+      alertType: 'early_afternoon' | 'overtime_morning' | 'wrong_timeslot';
+      message: string;
+      severity: 'warning' | 'error';
+    }> = [];
+
+    // Créer les heures de référence pour aujourd'hui
+    const today = format(now, 'yyyy-MM-dd');
+    const morningEnd = new Date(
+      `${today}T${settings.morning_end_time || '13:00'}:00`
+    );
+    const afternoonStart = new Date(
+      `${today}T${settings.afternoon_start_time || '14:00'}:00`
+    );
+
+    for (const reservation of reservations) {
+      // Ne vérifier que les réservations sur l'eau du jour actuel
+      if (
+        reservation.status !== 'on_water' ||
+        reservation.date !== currentDate
+      ) {
+        continue;
+      }
+
+      // Cas 1: Réservation après-midi qui est sur l'eau trop tôt
+      if (reservation.timeslot === 'afternoon' && now < afternoonStart) {
+        const minutesEarly = Math.floor(
+          (afternoonStart.getTime() - now.getTime()) / (1000 * 60)
+        );
+        alerts.push({
+          id: reservation.id!,
+          alertType: 'early_afternoon',
+          message: `Sur l'eau ${minutesEarly}min avant l'heure (après-midi commence à ${settings.afternoon_start_time})`,
+          severity: 'warning',
+        });
+      }
+
+      // Cas 2: Réservation matin qui est encore sur l'eau après l'heure limite
+      if (reservation.timeslot === 'morning' && now > morningEnd) {
+        const minutesOvertime = Math.floor(
+          (now.getTime() - morningEnd.getTime()) / (1000 * 60)
+        );
+        alerts.push({
+          id: reservation.id!,
+          alertType: 'overtime_morning',
+          message: `Dépassement de ${minutesOvertime}min (matin se termine à ${settings.morning_end_time})`,
+          severity: minutesOvertime > 60 ? 'error' : 'warning',
+        });
+      }
+
+      // Cas 3: Vérification générale - réservation sur l'eau en dehors de son créneau
+      if (
+        reservation.timeslot === 'morning' &&
+        (now <
+          new Date(`${today}T${settings.morning_start_time || '09:00'}:00`) ||
+          now > morningEnd)
+      ) {
+        // Déjà géré par le cas 2 pour les dépassements
+      } else if (
+        reservation.timeslot === 'afternoon' &&
+        (now < afternoonStart ||
+          now >
+            new Date(`${today}T${settings.afternoon_end_time || '18:00'}:00`))
+      ) {
+        // Déjà géré par le cas 1 pour les départs trop tôts
+        if (
+          now >
+          new Date(`${today}T${settings.afternoon_end_time || '18:00'}:00`)
+        ) {
+          const minutesOvertime = Math.floor(
+            (now.getTime() -
+              new Date(
+                `${today}T${settings.afternoon_end_time || '18:00'}:00`
+              ).getTime()) /
+              (1000 * 60)
+          );
+          alerts.push({
+            id: reservation.id!,
+            alertType: 'wrong_timeslot',
+            message: `Dépassement après-midi de ${minutesOvertime}min (se termine à ${settings.afternoon_end_time})`,
+            severity: minutesOvertime > 30 ? 'error' : 'warning',
+          });
+        }
+      }
+    }
+
+    return alerts;
+  }
+
+  // Méthode pour obtenir les réservations avec alertes intégrées
+  async getReservationsWithTimeAlerts(date?: string): Promise<
+    Array<
+      Reservation & {
+        timeAlert?: {
+          type: 'early_afternoon' | 'overtime_morning' | 'wrong_timeslot';
+          message: string;
+          severity: 'warning' | 'error';
+        };
+        isLate?: boolean;
+        lateMinutes?: number;
+      }
+    >
+  > {
+    if (!this.db) throw new Error('Database not initialized');
+
+    const reservations = await this.getReservations(date);
+    const currentDate = date || format(new Date(), 'yyyy-MM-dd');
+    const alerts = await this.analyzeReservationTimeAlerts(
+      reservations,
+      currentDate
+    );
+
+    // Ajouter aussi la détection de retard classique
+    const now = new Date();
+
+    return reservations.map((reservation) => {
+      const alert = alerts.find((a) => a.id === reservation.id);
+
+      // Calculer le retard classique (pour les réservations en attente)
+      let isLate = false;
+      let lateMinutes = 0;
+
+      if (
+        reservation.status === 'pending' &&
+        reservation.date === format(now, 'yyyy-MM-dd')
+      ) {
+        const expectedTime = new Date(
+          `${reservation.date}T${reservation.arrival_time}:00`
+        );
+        isLate = now > expectedTime;
+        lateMinutes = isLate
+          ? Math.floor((now.getTime() - expectedTime.getTime()) / (1000 * 60))
+          : 0;
+      }
+
+      return {
+        ...reservation,
+        timeAlert: alert
+          ? {
+              type: alert.alertType,
+              message: alert.message,
+              severity: alert.severity,
+            }
+          : undefined,
+        isLate,
+        lateMinutes,
+      };
+    });
   }
 
   suggestCanoeAllocation(people: number): { single: number; double: number } {
