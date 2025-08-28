@@ -5,25 +5,25 @@ const statusConfig = {
   pending: {
     color: '#FF9800',
     backgroundColor: '#FFF3E0',
-    label: 'Pending',
+    label: 'En attente',
     icon: 'clock-outline',
   },
   ongoing: {
     color: '#2196F3',
     backgroundColor: '#E3F2FD',
-    label: 'Ongoing',
+    label: 'En cours',
     icon: 'play',
   },
   completed: {
     color: '#4CAF50',
     backgroundColor: '#E8F5E8',
-    label: 'Completed',
+    label: 'Terminé',
     icon: 'check',
   },
   canceled: {
     color: '#F44336',
     backgroundColor: '#FFEBEE',
-    label: 'Canceled',
+    label: 'Annulé',
     icon: 'close',
   },
 };
@@ -39,12 +39,12 @@ export function StatusChip({ status, size = 'medium' }: StatusChipProps) {
   return (
     <Chip
       icon={config.icon}
-      textStyle={{ 
-        color: config.color, 
+      textStyle={{
+        color: config.color,
         fontSize: size === 'small' ? 11 : 13,
-        fontWeight: '500'
+        fontWeight: '500',
       }}
-      style={{ 
+      style={{
         backgroundColor: config.backgroundColor,
         borderColor: config.color,
         borderWidth: 1,

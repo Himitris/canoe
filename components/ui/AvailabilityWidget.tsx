@@ -4,9 +4,24 @@ import { Card, Text, ProgressBar, useTheme } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 interface AvailabilityData {
-  morning: { single: number; double: number; total_single: number; total_double: number };
-  afternoon: { single: number; double: number; total_single: number; total_double: number };
-  full_day: { single: number; double: number; total_single: number; total_double: number };
+  morning: {
+    single: number;
+    double: number;
+    total_single: number;
+    total_double: number;
+  };
+  afternoon: {
+    single: number;
+    double: number;
+    total_single: number;
+    total_double: number;
+  };
+  full_day: {
+    single: number;
+    double: number;
+    total_single: number;
+    total_double: number;
+  };
 }
 
 interface AvailabilityWidgetProps {
@@ -14,14 +29,17 @@ interface AvailabilityWidgetProps {
   selectedDate: string;
 }
 
-export function AvailabilityWidget({ availability, selectedDate }: AvailabilityWidgetProps) {
+export function AvailabilityWidget({
+  availability,
+  selectedDate,
+}: AvailabilityWidgetProps) {
   const theme = useTheme();
 
   if (!availability) {
     return (
       <Card style={styles.card} mode="elevated">
         <Card.Content>
-          <Text>Loading availability...</Text>
+          <Text>Chargement de la disponibilité...</Text>
         </Card.Content>
       </Card>
     );
@@ -30,19 +48,26 @@ export function AvailabilityWidget({ availability, selectedDate }: AvailabilityW
   const getOccupancyColor = (used: number, total: number) => {
     const percentage = used / total;
     if (percentage >= 0.9) return theme.colors.error;
-    if (percentage >= 0.7) return theme.colors.warning;
-    return theme.colors.success;
+    if (percentage >= 0.7) return '#FFA000'; // Amber warning color
+    return theme.colors.primary; // Use primary as success color
   };
 
   const renderTimeSlot = (
     title: string,
     icon: string,
-    data: { single: number; double: number; total_single: number; total_double: number }
+    data: {
+      single: number;
+      double: number;
+      total_single: number;
+      total_double: number;
+    }
   ) => {
     const singleUsed = data.total_single - data.single;
     const doubleUsed = data.total_double - data.double;
-    const singleProgress = data.total_single > 0 ? singleUsed / data.total_single : 0;
-    const doubleProgress = data.total_double > 0 ? doubleUsed / data.total_double : 0;
+    const singleProgress =
+      data.total_single > 0 ? singleUsed / data.total_single : 0;
+    const doubleProgress =
+      data.total_double > 0 ? doubleUsed / data.total_double : 0;
 
     return (
       <View style={styles.timeSlot}>
@@ -56,11 +81,11 @@ export function AvailabilityWidget({ availability, selectedDate }: AvailabilityW
             {title}
           </Text>
         </View>
-        
+
         <View style={styles.progressContainer}>
           <View style={styles.progressItem}>
             <Text variant="labelSmall" style={styles.progressLabel}>
-              Single
+              Simples
             </Text>
             <ProgressBar
               progress={singleProgress}
@@ -71,10 +96,10 @@ export function AvailabilityWidget({ availability, selectedDate }: AvailabilityW
               {data.single}/{data.total_single}
             </Text>
           </View>
-          
+
           <View style={styles.progressItem}>
             <Text variant="labelSmall" style={styles.progressLabel}>
-              Double
+              Doubles
             </Text>
             <ProgressBar
               progress={doubleProgress}
@@ -100,14 +125,22 @@ export function AvailabilityWidget({ availability, selectedDate }: AvailabilityW
             color={theme.colors.primary}
           />
           <Text variant="titleMedium" style={styles.title}>
-            Live Availability
+            Disponibilité en Temps Réel
           </Text>
         </View>
-        
+
         <View style={styles.timeSlots}>
-          {renderTimeSlot('Morning', 'weather-sunny', availability.morning)}
-          {renderTimeSlot('Afternoon', 'weather-sunset', availability.afternoon)}
-          {renderTimeSlot('Full Day', 'clock-outline', availability.full_day)}
+          {renderTimeSlot('Matin', 'weather-sunny', availability.morning)}
+          {renderTimeSlot(
+            'Après-midi',
+            'weather-sunset',
+            availability.afternoon
+          )}
+          {renderTimeSlot(
+            'Journée complète',
+            'clock-outline',
+            availability.full_day
+          )}
         </View>
       </Card.Content>
     </Card>
@@ -155,7 +188,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   progressLabel: {
-    minWidth: 40,
+    minWidth: 50,
     color: '#666',
   },
   progressBar: {

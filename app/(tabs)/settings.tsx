@@ -1,16 +1,18 @@
 import React, { useState, useCallback } from 'react';
 import { View, ScrollView, StyleSheet, Alert } from 'react-native';
-import { 
-  Card, 
-  Title, 
-  Text, 
-  TextInput, 
-  Button, 
-  useTheme, 
+import {
+  Card,
+  Title,
+  Text,
+  TextInput,
+  Button,
+  useTheme,
   Switch,
-  Divider 
+  Divider,
 } from 'react-native-paper';
 import { useFocusEffect } from 'expo-router';
+import { format } from 'date-fns'; // IMPORT CORRIGÉ
+import { fr } from 'date-fns/locale';
 import { useDatabase } from '../../components/database/DatabaseProvider';
 import { Settings } from '../../services/DatabaseService';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -42,7 +44,7 @@ export default function SettingsScreen() {
       setSettings(data);
       setTempSettings(data);
     } catch (error) {
-      console.error('Error loading settings:', error);
+      console.error('Erreur lors du chargement des paramètres:', error);
     }
   };
 
@@ -57,13 +59,19 @@ export default function SettingsScreen() {
   const handleSave = async () => {
     if (!db) return;
 
-    if (tempSettings.total_single_canoes < 0 || tempSettings.total_double_canoes < 0) {
-      Alert.alert('Error', 'Canoe counts cannot be negative');
+    if (
+      tempSettings.total_single_canoes < 0 ||
+      tempSettings.total_double_canoes < 0
+    ) {
+      Alert.alert('Erreur', 'Le nombre de canoës ne peut pas être négatif');
       return;
     }
 
-    if (tempSettings.total_single_canoes === 0 && tempSettings.total_double_canoes === 0) {
-      Alert.alert('Error', 'You must have at least one canoe available');
+    if (
+      tempSettings.total_single_canoes === 0 &&
+      tempSettings.total_double_canoes === 0
+    ) {
+      Alert.alert('Erreur', 'Vous devez avoir au moins un canoë disponible');
       return;
     }
 
@@ -71,10 +79,10 @@ export default function SettingsScreen() {
     try {
       await db.updateSettings(tempSettings);
       setSettings(tempSettings);
-      Alert.alert('Success', 'Settings saved successfully!');
+      Alert.alert('Succès', 'Paramètres sauvegardés avec succès !');
     } catch (error) {
-      console.error('Error saving settings:', error);
-      Alert.alert('Error', 'Failed to save settings. Please try again.');
+      console.error('Erreur lors de la sauvegarde:', error);
+      Alert.alert('Erreur', 'Échec de la sauvegarde. Veuillez réessayer.');
     } finally {
       setLoading(false);
     }
@@ -90,22 +98,25 @@ export default function SettingsScreen() {
     setBackupLoading(true);
     try {
       const data = await db.createBackup();
-      const fileName = `canoe_backup_${format(new Date(), 'yyyy-MM-dd_HH-mm')}.json`;
+      const fileName = `sauvegarde_canoe_${format(
+        new Date(),
+        'yyyy-MM-dd_HH-mm'
+      )}.json`;
       const fileUri = `${FileSystem.documentDirectory}${fileName}`;
-      
+
       await FileSystem.writeAsStringAsync(fileUri, data);
-      
+
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(fileUri, {
           mimeType: 'application/json',
-          dialogTitle: 'Export Canoe Rental Data',
+          dialogTitle: 'Exporter les données de location de canoës',
         });
       } else {
-        Alert.alert('Success', `Data exported to ${fileName}`);
+        Alert.alert('Succès', `Données exportées vers ${fileName}`);
       }
     } catch (error) {
-      console.error('Error exporting data:', error);
-      Alert.alert('Error', 'Failed to export data. Please try again.');
+      console.error("Erreur lors de l'export:", error);
+      Alert.alert('Erreur', "Échec de l'export. Veuillez réessayer.");
     } finally {
       setBackupLoading(false);
     }
@@ -115,12 +126,12 @@ export default function SettingsScreen() {
     if (!db) return;
 
     Alert.alert(
-      'Import Data',
-      'This will replace all existing data. Are you sure you want to continue?',
+      'Importer les données',
+      'Ceci remplacera toutes les données existantes. Êtes-vous sûr de vouloir continuer ?',
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: 'Annuler', style: 'cancel' },
         {
-          text: 'Continue',
+          text: 'Continuer',
           style: 'destructive',
           onPress: async () => {
             try {
@@ -130,19 +141,24 @@ export default function SettingsScreen() {
               });
 
               if (!result.canceled && result.assets[0]) {
-                const fileContent = await FileSystem.readAsStringAsync(result.assets[0].uri);
+                const fileContent = await FileSystem.readAsStringAsync(
+                  result.assets[0].uri
+                );
                 const importResult = await db.importData(fileContent);
-                
+
                 if (importResult.success) {
-                  Alert.alert('Success', importResult.message);
+                  Alert.alert('Succès', importResult.message);
                   await loadSettings();
                 } else {
-                  Alert.alert('Error', importResult.message);
+                  Alert.alert('Erreur', importResult.message);
                 }
               }
             } catch (error) {
-              console.error('Error importing data:', error);
-              Alert.alert('Error', 'Failed to import data. Please check the file format.');
+              console.error("Erreur lors de l'import:", error);
+              Alert.alert(
+                'Erreur',
+                "Échec de l'import. Veuillez vérifier le format du fichier."
+              );
             }
           },
         },
@@ -150,20 +166,25 @@ export default function SettingsScreen() {
     );
   };
 
-  const hasChanges = 
+  const hasChanges =
     tempSettings.total_single_canoes !== settings.total_single_canoes ||
     tempSettings.total_double_canoes !== settings.total_double_canoes ||
     tempSettings.auto_backup_enabled !== settings.auto_backup_enabled;
 
-  const totalCanoes = tempSettings.total_single_canoes + tempSettings.total_double_canoes;
-  const maxCapacity = tempSettings.total_single_canoes + (tempSettings.total_double_canoes * 2);
+  const totalCanoes =
+    tempSettings.total_single_canoes + tempSettings.total_double_canoes;
+  const maxCapacity =
+    tempSettings.total_single_canoes + tempSettings.total_double_canoes * 2;
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.scrollContent}
+    >
       <View style={styles.header}>
-        <Title style={styles.headerTitle}>Settings</Title>
+        <Title style={styles.headerTitle}>Paramètres</Title>
         <Text variant="bodyMedium" style={styles.headerSubtitle}>
-          Configure your canoe rental business
+          Configurer votre entreprise de location de canoës
         </Text>
       </View>
 
@@ -171,61 +192,61 @@ export default function SettingsScreen() {
         <Card.Content>
           <View style={styles.sectionHeader}>
             <MaterialCommunityIcons
-              name="canoe"
+              name="kayaking"
               size={20}
               color={theme.colors.primary}
             />
             <Text variant="titleMedium" style={styles.sectionTitle}>
-              Canoe Inventory
+              Inventaire des Canoës
             </Text>
           </View>
 
           <TextInput
-            label="Total Single Canoes"
+            label="Total canoës simples"
             value={tempSettings.total_single_canoes.toString()}
-            onChangeText={(text) => 
-              setTempSettings(prev => ({
+            onChangeText={(text) =>
+              setTempSettings((prev) => ({
                 ...prev,
-                total_single_canoes: parseInt(text) || 0
+                total_single_canoes: parseInt(text) || 0,
               }))
             }
             keyboardType="numeric"
             mode="outlined"
             style={styles.input}
-            right={<TextInput.Icon icon="canoe" />}
+            right={<TextInput.Icon icon="kayaking" />}
           />
 
           <TextInput
-            label="Total Double Canoes"
+            label="Total canoës doubles"
             value={tempSettings.total_double_canoes.toString()}
-            onChangeText={(text) => 
-              setTempSettings(prev => ({
+            onChangeText={(text) =>
+              setTempSettings((prev) => ({
                 ...prev,
-                total_double_canoes: parseInt(text) || 0
+                total_double_canoes: parseInt(text) || 0,
               }))
             }
             keyboardType="numeric"
             mode="outlined"
             style={styles.input}
-            right={<TextInput.Icon icon="canoe" />}
+            right={<TextInput.Icon icon="kayaking" />}
           />
 
           <View style={styles.summaryContainer}>
             <View style={styles.summaryRow}>
               <Text variant="bodyMedium" style={styles.summaryLabel}>
-                Total Canoes:
+                Total canoës :
               </Text>
               <Text variant="bodyLarge" style={styles.summaryValue}>
                 {totalCanoes}
               </Text>
             </View>
-            
+
             <View style={styles.summaryRow}>
               <Text variant="bodyMedium" style={styles.summaryLabel}>
-                Maximum Capacity:
+                Capacité maximale :
               </Text>
               <Text variant="bodyLarge" style={styles.summaryValue}>
-                {maxCapacity} people
+                {maxCapacity} personnes
               </Text>
             </View>
           </View>
@@ -241,30 +262,38 @@ export default function SettingsScreen() {
               color={theme.colors.primary}
             />
             <Text variant="titleMedium" style={styles.sectionTitle}>
-              Backup & Data Management
+              Sauvegarde et Gestion des Données
             </Text>
           </View>
 
           <View style={styles.switchContainer}>
             <View style={styles.switchContent}>
               <Text variant="bodyLarge" style={styles.switchLabel}>
-                Auto Backup
+                Sauvegarde automatique
               </Text>
               <Text variant="bodySmall" style={styles.switchDescription}>
-                Automatically backup data daily
+                Sauvegarder automatiquement les données quotidiennement
               </Text>
             </View>
             <Switch
               value={tempSettings.auto_backup_enabled}
               onValueChange={(value) =>
-                setTempSettings(prev => ({ ...prev, auto_backup_enabled: value }))
+                setTempSettings((prev) => ({
+                  ...prev,
+                  auto_backup_enabled: value,
+                }))
               }
             />
           </View>
 
           {settings.last_backup_date && (
             <Text variant="bodySmall" style={styles.lastBackupText}>
-              Last backup: {format(new Date(settings.last_backup_date), 'MMM dd, yyyy HH:mm')}
+              Dernière sauvegarde :{' '}
+              {format(
+                new Date(settings.last_backup_date),
+                'dd MMM yyyy HH:mm',
+                { locale: fr }
+              )}
             </Text>
           )}
 
@@ -279,9 +308,9 @@ export default function SettingsScreen() {
               style={styles.backupButton}
               icon="export"
             >
-              Export Data
+              Exporter les données
             </Button>
-            
+
             <Button
               mode="outlined"
               onPress={handleImportData}
@@ -289,7 +318,7 @@ export default function SettingsScreen() {
               style={styles.backupButton}
               icon="import"
             >
-              Import Data
+              Importer les données
             </Button>
           </View>
         </Card.Content>
@@ -298,20 +327,23 @@ export default function SettingsScreen() {
       <Card style={styles.card} mode="outlined">
         <Card.Content>
           <Text variant="titleSmall" style={styles.infoTitle}>
-            Important Notes
+            Notes importantes
           </Text>
           <View style={styles.infoList}>
             <Text variant="bodySmall" style={styles.infoItem}>
-              • Changes will affect future availability calculations
+              • Les modifications affecteront les calculs de disponibilité
+              future
             </Text>
             <Text variant="bodySmall" style={styles.infoItem}>
-              • Full day reservations block both morning and afternoon slots
+              • Les réservations journée complète bloquent les créneaux matin et
+              après-midi
             </Text>
             <Text variant="bodySmall" style={styles.infoItem}>
-              • Existing reservations are not affected by inventory changes
+              • Les réservations existantes ne sont pas affectées par les
+              changements d'inventaire
             </Text>
             <Text variant="bodySmall" style={styles.infoItem}>
-              • Regular backups help protect your business data
+              • Les sauvegardes régulières protègent vos données d'entreprise
             </Text>
           </View>
         </Card.Content>
@@ -325,19 +357,23 @@ export default function SettingsScreen() {
           disabled={loading || !hasChanges}
           style={[
             styles.saveButton,
-            { backgroundColor: hasChanges ? theme.colors.primary : theme.colors.surfaceVariant }
+            {
+              backgroundColor: hasChanges
+                ? theme.colors.primary
+                : theme.colors.surfaceVariant,
+            },
           ]}
         >
-          Save Changes
+          Sauvegarder les modifications
         </Button>
-        
+
         <Button
           mode="outlined"
           onPress={handleReset}
           disabled={loading || !hasChanges}
           style={styles.resetButton}
         >
-          Reset
+          Réinitialiser
         </Button>
       </View>
     </ScrollView>

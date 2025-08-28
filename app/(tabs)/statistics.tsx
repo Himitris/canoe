@@ -1,8 +1,10 @@
+// Remplacez le contenu de app/(tabs)/statistics.tsx avec cette version corrigée
+
 import React, { useState, useCallback } from 'react';
 import { View, ScrollView, StyleSheet } from 'react-native';
 import { Card, Title, Text, useTheme, ProgressBar, Chip } from 'react-native-paper';
 import { useFocusEffect } from 'expo-router';
-import { format, subDays, addDays } from 'date-fns';
+import { format, subDays, isValid } from 'date-fns';
 import { useDatabase } from '../../components/database/DatabaseProvider';
 import { DailyStats } from '../../services/DatabaseService';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -55,11 +57,29 @@ export default function Statistics() {
     );
   };
 
+  // Correction: Validation des dates avant formatage
   const getBusiestDay = () => {
+    if (dailyStats.length === 0) {
+      return null; // Retourner null plutôt qu'un objet avec date vide
+    }
+    
     return dailyStats.reduce((busiest, day) => 
       day.total_people > busiest.total_people ? day : busiest,
-      dailyStats[0] || { date: '', total_people: 0 }
+      dailyStats[0]
     );
+  };
+
+  // Helper function pour valider et formater les dates
+  const safeFormatDate = (dateString: string, formatString: string): string => {
+    if (!dateString) return '';
+    
+    const date = new Date(dateString);
+    if (!isValid(date)) {
+      console.warn('Invalid date:', dateString);
+      return '';
+    }
+    
+    return format(date, formatString);
   };
 
   if (!isReady) {
@@ -156,14 +176,15 @@ export default function Statistics() {
         </Card.Content>
       </Card>
 
-      {busiestDay && (
+      {/* Correction: Vérification que busiestDay existe et a une date valide */}
+      {busiestDay && busiestDay.date && (
         <Card style={styles.card} mode="elevated">
           <Card.Content>
             <View style={styles.summaryHeader}>
               <MaterialCommunityIcons
                 name="trophy"
                 size={20}
-                color={theme.colors.warning}
+                color="#FFA000"
               />
               <Text variant="titleMedium" style={styles.cardTitle}>
                 Busiest Day
@@ -172,7 +193,7 @@ export default function Statistics() {
             
             <View style={styles.busiestDayContent}>
               <Text variant="headlineSmall" style={styles.busiestDayDate}>
-                {format(new Date(busiestDay.date), 'MMM dd, yyyy')}
+                {safeFormatDate(busiestDay.date, 'MMM dd, yyyy')}
               </Text>
               <Text variant="bodyLarge" style={styles.busiestDayStats}>
                 {busiestDay.total_people} people • {busiestDay.total_reservations} reservations
@@ -196,48 +217,56 @@ export default function Statistics() {
           </View>
           
           <View style={styles.dailyList}>
-            {dailyStats.slice(-7).map((day) => (
-              <View key={day.date} style={styles.dailyItem}>
-                <View style={styles.dailyHeader}>
-                  <Text variant="bodyLarge" style={styles.dailyDate}>
-                    {format(new Date(day.date), 'MMM dd')}
-                  </Text>
-                  <Text variant="bodyMedium" style={styles.dailyPeople}>
-                    {day.total_people} people
-                  </Text>
-                </View>
-                
-                <View style={styles.occupancyBars}>
-                  <View style={styles.occupancyItem}>
-                    <Text variant="labelSmall" style={styles.occupancyLabel}>
-                      Morning
+            {dailyStats.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Text variant="bodyLarge" style={styles.emptyText}>
+                  No data available for the selected period
+                </Text>
+              </View>
+            ) : (
+              dailyStats.slice(-7).map((day) => (
+                <View key={day.date} style={styles.dailyItem}>
+                  <View style={styles.dailyHeader}>
+                    <Text variant="bodyLarge" style={styles.dailyDate}>
+                      {safeFormatDate(day.date, 'MMM dd')}
                     </Text>
-                    <ProgressBar
-                      progress={day.morning_occupancy / 100}
-                      color={theme.colors.primary}
-                      style={styles.occupancyBar}
-                    />
-                    <Text variant="labelSmall" style={styles.occupancyPercent}>
-                      {day.morning_occupancy.toFixed(0)}%
+                    <Text variant="bodyMedium" style={styles.dailyPeople}>
+                      {day.total_people} people
                     </Text>
                   </View>
                   
-                  <View style={styles.occupancyItem}>
-                    <Text variant="labelSmall" style={styles.occupancyLabel}>
-                      Afternoon
-                    </Text>
-                    <ProgressBar
-                      progress={day.afternoon_occupancy / 100}
-                      color={theme.colors.secondary}
-                      style={styles.occupancyBar}
-                    />
-                    <Text variant="labelSmall" style={styles.occupancyPercent}>
-                      {day.afternoon_occupancy.toFixed(0)}%
-                    </Text>
+                  <View style={styles.occupancyBars}>
+                    <View style={styles.occupancyItem}>
+                      <Text variant="labelSmall" style={styles.occupancyLabel}>
+                        Morning
+                      </Text>
+                      <ProgressBar
+                        progress={day.morning_occupancy / 100}
+                        color={theme.colors.primary}
+                        style={styles.occupancyBar}
+                      />
+                      <Text variant="labelSmall" style={styles.occupancyPercent}>
+                        {day.morning_occupancy.toFixed(0)}%
+                      </Text>
+                    </View>
+                    
+                    <View style={styles.occupancyItem}>
+                      <Text variant="labelSmall" style={styles.occupancyLabel}>
+                        Afternoon
+                      </Text>
+                      <ProgressBar
+                        progress={day.afternoon_occupancy / 100}
+                        color={theme.colors.secondary}
+                        style={styles.occupancyBar}
+                      />
+                      <Text variant="labelSmall" style={styles.occupancyPercent}>
+                        {day.afternoon_occupancy.toFixed(0)}%
+                      </Text>
+                    </View>
                   </View>
                 </View>
-              </View>
-            ))}
+              ))
+            )}
           </View>
         </Card.Content>
       </Card>
@@ -362,5 +391,13 @@ const styles = StyleSheet.create({
     minWidth: 35,
     textAlign: 'right',
     fontWeight: '500',
+  },
+  emptyState: {
+    alignItems: 'center',
+    paddingVertical: 32,
+  },
+  emptyText: {
+    color: '#666',
+    textAlign: 'center',
   },
 });

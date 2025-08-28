@@ -1,33 +1,47 @@
 import React, { useState, useEffect } from 'react';
 import { View, ScrollView, StyleSheet, Alert } from 'react-native';
-import { 
-  TextInput, 
-  Button, 
-  Card, 
-  Title, 
-  Text, 
-  SegmentedButtons, 
+import {
+  TextInput,
+  Button,
+  Card,
+  Title,
+  Text,
+  SegmentedButtons,
   useTheme,
   HelperText,
-  Switch
+  Switch,
 } from 'react-native-paper';
 import { useForm, Controller } from 'react-hook-form';
 import { yupResolver } from '@hookform/resolvers/yup';
 import * as yup from 'yup';
 import { format } from 'date-fns';
+import { fr } from 'date-fns/locale';
 import { useDatabase } from '../../components/database/DatabaseProvider';
 import { useRouter } from 'expo-router';
 import { AutoCompleteInput } from '../../components/ui/AutoCompleteInput';
 import { OverBookingAlert } from '../../components/ui/OverBookingAlert';
 
 const schema = yup.object().shape({
-  name: yup.string().required('Customer name is required').min(2, 'Name must be at least 2 characters'),
-  date: yup.string().required('Date is required'),
-  nb_people: yup.number().required('Number of people is required').min(1, 'Must have at least 1 person').max(50, 'Maximum 50 people allowed'),
-  single_canoes: yup.number().min(0, 'Cannot be negative').integer('Must be a whole number'),
-  double_canoes: yup.number().min(0, 'Cannot be negative').integer('Must be a whole number'),
-  arrival_time: yup.string().required('Arrival time is required'),
-  timeslot: yup.string().required('Time slot is required'),
+  name: yup
+    .string()
+    .required('Le nom du client est requis')
+    .min(2, 'Le nom doit contenir au moins 2 caractères'),
+  date: yup.string().required('La date est requise'),
+  nb_people: yup
+    .number()
+    .required('Le nombre de personnes est requis')
+    .min(1, 'Il doit y avoir au moins 1 personne')
+    .max(50, 'Maximum 50 personnes autorisées'),
+  single_canoes: yup
+    .number()
+    .min(0, 'Ne peut pas être négatif')
+    .integer('Doit être un nombre entier'),
+  double_canoes: yup
+    .number()
+    .min(0, 'Ne peut pas être négatif')
+    .integer('Doit être un nombre entier'),
+  arrival_time: yup.string().required("L'heure d'arrivée est requise"),
+  timeslot: yup.string().required('Le créneau horaire est requis'),
 });
 
 type FormData = {
@@ -51,7 +65,14 @@ export default function AddReservation() {
     message: string;
   }>({ isVisible: false, message: '' });
 
-  const { control, handleSubmit, formState: { errors }, watch, setValue, reset } = useForm<FormData>({
+  const {
+    control,
+    handleSubmit,
+    formState: { errors },
+    watch,
+    setValue,
+    reset,
+  } = useForm<FormData>({
     resolver: yupResolver(schema),
     defaultValues: {
       name: '',
@@ -66,7 +87,7 @@ export default function AddReservation() {
 
   const watchedValues = watch();
 
-  // Auto-suggest canoes when people count changes
+  // Suggestion automatique de canoës quand le nombre de personnes change
   useEffect(() => {
     if (autoSuggestEnabled && db) {
       const suggestion = db.suggestCanoeAllocation(watchedValues.nb_people);
@@ -75,7 +96,7 @@ export default function AddReservation() {
     }
   }, [watchedValues.nb_people, autoSuggestEnabled, db, setValue]);
 
-  // Check for overbooking
+  // Vérification d'overbooking
   useEffect(() => {
     const checkOverbooking = async () => {
       if (!db || !watchedValues.date || !watchedValues.timeslot) return;
@@ -93,7 +114,7 @@ export default function AddReservation() {
           message: result.message || '',
         });
       } catch (error) {
-        console.error('Error checking overbooking:', error);
+        console.error("Erreur lors de la vérification d'overbooking:", error);
       }
     };
 
@@ -104,27 +125,27 @@ export default function AddReservation() {
     watchedValues.timeslot,
     watchedValues.single_canoes,
     watchedValues.double_canoes,
-    db
+    db,
   ]);
 
   const onSubmit = async (data: FormData) => {
     if (!db) return;
 
     if (data.single_canoes === 0 && data.double_canoes === 0) {
-      Alert.alert('Error', 'Please select at least one canoe');
+      Alert.alert('Erreur', 'Veuillez sélectionner au moins un canoë');
       return;
     }
 
     const totalCapacity = data.single_canoes * 1 + data.double_canoes * 2;
     if (totalCapacity < data.nb_people) {
       Alert.alert(
-        'Capacity Error', 
-        `Selected canoes can accommodate ${totalCapacity} people, but you have ${data.nb_people} people. Please adjust your selection.`
+        'Erreur de capacité',
+        `Les canoës sélectionnés peuvent accueillir ${totalCapacity} personnes, mais vous avez ${data.nb_people} personnes. Veuillez ajuster votre sélection.`
       );
       return;
     }
 
-    // Check for overbooking one more time before submitting
+    // Vérifier l'overbooking une dernière fois avant de soumettre
     const overbookingCheck = await db.checkOverbooking(
       data.date,
       data.timeslot,
@@ -134,14 +155,14 @@ export default function AddReservation() {
 
     if (overbookingCheck.isOverbooked) {
       Alert.alert(
-        'Overbooking Warning',
-        `${overbookingCheck.message}\n\nDo you want to proceed anyway?`,
+        'Avertissement de surbooking',
+        `${overbookingCheck.message}\n\nVoulez-vous continuer quand même ?`,
         [
-          { text: 'Cancel', style: 'cancel' },
-          { 
-            text: 'Proceed', 
+          { text: 'Annuler', style: 'cancel' },
+          {
+            text: 'Continuer',
             style: 'destructive',
-            onPress: () => createReservation(data)
+            onPress: () => createReservation(data),
           },
         ]
       );
@@ -158,29 +179,32 @@ export default function AddReservation() {
         ...data,
         status: 'pending',
       });
-      
-      Alert.alert('Success', 'Reservation created successfully!', [
+
+      Alert.alert('Succès', 'Réservation créée avec succès !', [
         {
-          text: 'Create Another',
+          text: 'Créer une autre',
           onPress: () => reset(),
         },
         {
-          text: 'View Dashboard',
+          text: 'Voir le tableau de bord',
           onPress: () => router.push('/'),
         },
       ]);
     } catch (error) {
-      console.error('Error creating reservation:', error);
-      Alert.alert('Error', 'Failed to create reservation. Please try again.');
+      console.error('Erreur lors de la création de la réservation:', error);
+      Alert.alert(
+        'Erreur',
+        'Échec de la création de la réservation. Veuillez réessayer.'
+      );
     } finally {
       setLoading(false);
     }
   };
 
   const timeSlotOptions = [
-    { value: 'morning', label: 'Morning' },
-    { value: 'afternoon', label: 'Afternoon' },
-    { value: 'full_day', label: 'Full Day' },
+    { value: 'morning', label: 'Matin' },
+    { value: 'afternoon', label: 'Après-midi' },
+    { value: 'full_day', label: 'Journée complète' },
   ];
 
   const manualSuggestCanoes = () => {
@@ -192,20 +216,24 @@ export default function AddReservation() {
   if (!isReady) {
     return (
       <View style={styles.loadingContainer}>
-        <Text>Loading...</Text>
+        <Text>Chargement...</Text>
       </View>
     );
   }
 
-  const totalCapacity = watchedValues.single_canoes * 1 + watchedValues.double_canoes * 2;
+  const totalCapacity =
+    watchedValues.single_canoes * 1 + watchedValues.double_canoes * 2;
   const isCapacityValid = totalCapacity >= watchedValues.nb_people;
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.scrollContent}
+    >
       <View style={styles.header}>
-        <Title style={styles.headerTitle}>New Reservation</Title>
+        <Title style={styles.headerTitle}>Nouvelle Réservation</Title>
         <Text variant="bodyMedium" style={styles.headerSubtitle}>
-          Create a new canoe rental reservation
+          Créer une nouvelle réservation de location de canoës
         </Text>
       </View>
 
@@ -217,7 +245,7 @@ export default function AddReservation() {
       <Card style={styles.card} mode="elevated">
         <Card.Content>
           <Text variant="titleMedium" style={styles.sectionTitle}>
-            Customer Information
+            Informations Client
           </Text>
 
           <Controller
@@ -225,7 +253,7 @@ export default function AddReservation() {
             name="name"
             render={({ field: { onChange, onBlur, value } }) => (
               <AutoCompleteInput
-                label="Customer Name *"
+                label="Nom du client *"
                 value={value}
                 onChangeText={onChange}
                 onBlur={onBlur}
@@ -251,7 +279,7 @@ export default function AddReservation() {
                 error={!!errors.date}
                 style={styles.input}
                 mode="outlined"
-                placeholder="YYYY-MM-DD"
+                placeholder="AAAA-MM-JJ"
                 right={<TextInput.Icon icon="calendar" />}
               />
             )}
@@ -265,7 +293,7 @@ export default function AddReservation() {
             name="arrival_time"
             render={({ field: { onChange, onBlur, value } }) => (
               <TextInput
-                label="Arrival Time *"
+                label="Heure d'arrivée *"
                 value={value}
                 onChangeText={onChange}
                 onBlur={onBlur}
@@ -286,7 +314,7 @@ export default function AddReservation() {
       <Card style={styles.card} mode="elevated">
         <Card.Content>
           <Text variant="titleMedium" style={styles.sectionTitle}>
-            Booking Details
+            Détails de la Réservation
           </Text>
 
           <Controller
@@ -294,7 +322,7 @@ export default function AddReservation() {
             name="nb_people"
             render={({ field: { onChange, onBlur, value } }) => (
               <TextInput
-                label="Number of People *"
+                label="Nombre de personnes *"
                 value={value.toString()}
                 onChangeText={(text) => onChange(parseInt(text) || 0)}
                 onBlur={onBlur}
@@ -312,7 +340,7 @@ export default function AddReservation() {
 
           <View style={styles.timeslotContainer}>
             <Text variant="bodyMedium" style={styles.timeslotLabel}>
-              Time Slot *
+              Créneau horaire *
             </Text>
             <Controller
               control={control}
@@ -334,11 +362,11 @@ export default function AddReservation() {
         <Card.Content>
           <View style={styles.canoesSectionHeader}>
             <Text variant="titleMedium" style={styles.sectionTitle}>
-              Canoe Selection
+              Sélection des Canoës
             </Text>
             <View style={styles.autoSuggestContainer}>
               <Text variant="labelMedium" style={styles.autoSuggestLabel}>
-                Auto-suggest
+                Suggestion auto
               </Text>
               <Switch
                 value={autoSuggestEnabled}
@@ -354,7 +382,7 @@ export default function AddReservation() {
               style={styles.suggestButton}
               icon="lightbulb-outline"
             >
-              Suggest Optimal Allocation
+              Suggérer l'allocation optimale
             </Button>
           )}
 
@@ -363,7 +391,7 @@ export default function AddReservation() {
             name="single_canoes"
             render={({ field: { onChange, onBlur, value } }) => (
               <TextInput
-                label="Single Canoes (1 person each)"
+                label="Canoës simples (1 personne chacun)"
                 value={value.toString()}
                 onChangeText={(text) => onChange(parseInt(text) || 0)}
                 onBlur={onBlur}
@@ -371,7 +399,7 @@ export default function AddReservation() {
                 style={styles.input}
                 mode="outlined"
                 keyboardType="numeric"
-                right={<TextInput.Icon icon="canoe" />}
+                right={<TextInput.Icon icon="kayaking" />}
               />
             )}
           />
@@ -384,7 +412,7 @@ export default function AddReservation() {
             name="double_canoes"
             render={({ field: { onChange, onBlur, value } }) => (
               <TextInput
-                label="Double Canoes (2 people each)"
+                label="Canoës doubles (2 personnes chacun)"
                 value={value.toString()}
                 onChangeText={(text) => onChange(parseInt(text) || 0)}
                 onBlur={onBlur}
@@ -392,7 +420,7 @@ export default function AddReservation() {
                 style={styles.input}
                 mode="outlined"
                 keyboardType="numeric"
-                right={<TextInput.Icon icon="canoe" />}
+                right={<TextInput.Icon icon="kayaking" />}
               />
             )}
           />
@@ -405,11 +433,18 @@ export default function AddReservation() {
               variant="bodySmall"
               style={[
                 styles.capacityText,
-                { color: isCapacityValid ? theme.colors.success : theme.colors.error }
+                {
+                  color: isCapacityValid
+                    ? theme.colors.primary
+                    : theme.colors.error,
+                },
               ]}
             >
-              Total capacity: {totalCapacity} people
-              {!isCapacityValid && ` (Need ${watchedValues.nb_people - totalCapacity} more)`}
+              Capacité totale : {totalCapacity} personnes
+              {!isCapacityValid &&
+                ` (Il manque ${
+                  watchedValues.nb_people - totalCapacity
+                } places)`}
             </Text>
           </View>
         </Card.Content>
@@ -423,16 +458,16 @@ export default function AddReservation() {
           disabled={loading || !isCapacityValid}
           style={styles.submitButton}
         >
-          Create Reservation
+          Créer la Réservation
         </Button>
-        
+
         <Button
           mode="outlined"
           onPress={() => reset()}
           disabled={loading}
           style={styles.resetButton}
         >
-          Reset Form
+          Réinitialiser le formulaire
         </Button>
       </View>
     </ScrollView>

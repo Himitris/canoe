@@ -8,13 +8,19 @@ interface OverBookingAlertProps {
   message: string;
 }
 
-export function OverBookingAlert({ isVisible, message }: OverBookingAlertProps) {
+export function OverBookingAlert({
+  isVisible,
+  message,
+}: OverBookingAlertProps) {
   const theme = useTheme();
 
   if (!isVisible) return null;
 
   return (
-    <Card style={[styles.card, { backgroundColor: theme.colors.errorContainer }]} mode="elevated">
+    <Card
+      style={[styles.card, { backgroundColor: theme.colors.errorContainer }]}
+      mode="elevated"
+    >
       <Card.Content>
         <View style={styles.content}>
           <MaterialCommunityIcons
@@ -23,10 +29,16 @@ export function OverBookingAlert({ isVisible, message }: OverBookingAlertProps) 
             color={theme.colors.error}
           />
           <View style={styles.textContainer}>
-            <Text variant="titleSmall" style={[styles.title, { color: theme.colors.error }]}>
-              Overbooking Alert
+            <Text
+              variant="titleSmall"
+              style={[styles.title, { color: theme.colors.error }]}
+            >
+              Alerte de Surbooking
             </Text>
-            <Text variant="bodyMedium" style={[styles.message, { color: theme.colors.onErrorContainer }]}>
+            <Text
+              variant="bodyMedium"
+              style={[styles.message, { color: theme.colors.onErrorContainer }]}
+            >
               {message}
             </Text>
           </View>

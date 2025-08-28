@@ -27,43 +27,59 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Dashboard',
+          title: 'Accueil',
           tabBarIcon: ({ size, color }) => (
-            <MaterialCommunityIcons name="view-dashboard" size={size} color={color} />
+            <MaterialCommunityIcons
+              name="view-dashboard"
+              size={size}
+              color={color}
+            />
           ),
         }}
       />
       <Tabs.Screen
         name="reservations"
         options={{
-          title: 'Reservations',
+          title: 'Réservations',
           tabBarIcon: ({ size, color }) => (
-            <MaterialCommunityIcons name="calendar-multiple" size={size} color={color} />
+            <MaterialCommunityIcons
+              name="calendar-multiple"
+              size={size}
+              color={color}
+            />
           ),
         }}
       />
       <Tabs.Screen
         name="add-reservation"
         options={{
-          title: 'Add',
+          title: 'Ajouter',
           tabBarIcon: ({ size, color }) => (
-            <MaterialCommunityIcons name="plus-circle" size={size} color={color} />
+            <MaterialCommunityIcons
+              name="plus-circle"
+              size={size}
+              color={color}
+            />
           ),
         }}
       />
       <Tabs.Screen
         name="statistics"
         options={{
-          title: 'Statistics',
+          title: 'Statistiques',
           tabBarIcon: ({ size, color }) => (
-            <MaterialCommunityIcons name="chart-line" size={size} color={color} />
+            <MaterialCommunityIcons
+              name="chart-line"
+              size={size}
+              color={color}
+            />
           ),
         }}
       />
       <Tabs.Screen
         name="settings"
         options={{
-          title: 'Settings',
+          title: 'Paramètres',
           tabBarIcon: ({ size, color }) => (
             <MaterialCommunityIcons name="cog" size={size} color={color} />
           ),

@@ -1,8 +1,12 @@
 import React, { useRef } from 'react';
 import { View, StyleSheet, Animated, Alert } from 'react-native';
 import { Card, Text, IconButton, useTheme } from 'react-native-paper';
-import { Swipeable, GestureHandlerRootView } from 'react-native-gesture-handler';
+import {
+  Swipeable,
+  GestureHandlerRootView,
+} from 'react-native-gesture-handler';
 import { format } from 'date-fns';
+import { fr } from 'date-fns/locale';
 import { Reservation } from '../../services/DatabaseService';
 import { StatusChip } from './StatusChip';
 
@@ -22,7 +26,10 @@ export function SwipeableReservationCard({
   const theme = useTheme();
   const swipeableRef = useRef<Swipeable>(null);
 
-  const renderRightActions = (progress: Animated.AnimatedAddition, dragX: Animated.AnimatedAddition) => {
+  const renderRightActions = (
+    progress: Animated.AnimatedAddition<number>,
+    dragX: Animated.AnimatedAddition<number>
+  ) => {
     const scale = progress.interpolate({
       inputRange: [0, 1],
       outputRange: [0, 1],
@@ -30,21 +37,28 @@ export function SwipeableReservationCard({
 
     return (
       <View style={styles.rightActions}>
-        <Animated.View style={[styles.actionButton, { transform: [{ scale }] }]}>
+        <Animated.View
+          style={[styles.actionButton, { transform: [{ scale }] }]}
+        >
           <IconButton
             icon="content-duplicate"
             size={20}
             iconColor="white"
-            style={[styles.actionIcon, { backgroundColor: theme.colors.primary }]}
+            style={[
+              styles.actionIcon,
+              { backgroundColor: theme.colors.primary },
+            ]}
             onPress={() => {
               swipeableRef.current?.close();
               onDuplicate(reservation.id!);
             }}
           />
         </Animated.View>
-        
+
         {reservation.status === 'pending' && (
-          <Animated.View style={[styles.actionButton, { transform: [{ scale }] }]}>
+          <Animated.View
+            style={[styles.actionButton, { transform: [{ scale }] }]}
+          >
             <IconButton
               icon="play"
               size={20}
@@ -57,9 +71,11 @@ export function SwipeableReservationCard({
             />
           </Animated.View>
         )}
-        
+
         {reservation.status === 'ongoing' && (
-          <Animated.View style={[styles.actionButton, { transform: [{ scale }] }]}>
+          <Animated.View
+            style={[styles.actionButton, { transform: [{ scale }] }]}
+          >
             <IconButton
               icon="check"
               size={20}
@@ -76,7 +92,10 @@ export function SwipeableReservationCard({
     );
   };
 
-  const renderLeftActions = (progress: Animated.AnimatedAddition, dragX: Animated.AnimatedAddition) => {
+  const renderLeftActions = (
+    progress: Animated.AnimatedAddition<number>,
+    dragX: Animated.AnimatedAddition<number>
+  ) => {
     const scale = progress.interpolate({
       inputRange: [0, 1],
       outputRange: [0, 1],
@@ -85,12 +104,17 @@ export function SwipeableReservationCard({
     return (
       <View style={styles.leftActions}>
         {onEdit && (
-          <Animated.View style={[styles.actionButton, { transform: [{ scale }] }]}>
+          <Animated.View
+            style={[styles.actionButton, { transform: [{ scale }] }]}
+          >
             <IconButton
               icon="pencil"
               size={20}
               iconColor="white"
-              style={[styles.actionIcon, { backgroundColor: theme.colors.tertiary }]}
+              style={[
+                styles.actionIcon,
+                { backgroundColor: theme.colors.tertiary },
+              ]}
               onPress={() => {
                 swipeableRef.current?.close();
                 onEdit(reservation.id!);
@@ -98,9 +122,11 @@ export function SwipeableReservationCard({
             />
           </Animated.View>
         )}
-        
+
         {reservation.status !== 'canceled' && (
-          <Animated.View style={[styles.actionButton, { transform: [{ scale }] }]}>
+          <Animated.View
+            style={[styles.actionButton, { transform: [{ scale }] }]}
+          >
             <IconButton
               icon="close"
               size={20}
@@ -109,14 +135,15 @@ export function SwipeableReservationCard({
               onPress={() => {
                 swipeableRef.current?.close();
                 Alert.alert(
-                  'Cancel Reservation',
-                  `Are you sure you want to cancel ${reservation.name}'s reservation?`,
+                  'Annuler la réservation',
+                  `Êtes-vous sûr de vouloir annuler la réservation de ${reservation.name} ?`,
                   [
-                    { text: 'No', style: 'cancel' },
-                    { 
-                      text: 'Yes', 
+                    { text: 'Non', style: 'cancel' },
+                    {
+                      text: 'Oui',
                       style: 'destructive',
-                      onPress: () => onStatusChange(reservation.id!, 'canceled')
+                      onPress: () =>
+                        onStatusChange(reservation.id!, 'canceled'),
                     },
                   ]
                 );
@@ -129,9 +156,9 @@ export function SwipeableReservationCard({
   };
 
   const timeSlotLabels = {
-    morning: 'Morning',
-    afternoon: 'Afternoon',
-    full_day: 'Full Day',
+    morning: 'Matin',
+    afternoon: 'Après-midi',
+    full_day: 'Journée complète',
   };
 
   return (
@@ -151,7 +178,10 @@ export function SwipeableReservationCard({
                   {reservation.name}
                 </Text>
                 <Text variant="bodyMedium" style={styles.dateTime}>
-                  {format(new Date(reservation.date), 'MMM dd, yyyy')} • {reservation.arrival_time}
+                  {format(new Date(reservation.date), 'dd MMM yyyy', {
+                    locale: fr,
+                  })}{' '}
+                  • {reservation.arrival_time}
                 </Text>
               </View>
               <StatusChip status={reservation.status} />
@@ -160,25 +190,25 @@ export function SwipeableReservationCard({
             <View style={styles.details}>
               <View style={styles.detailItem}>
                 <Text variant="labelMedium" style={styles.detailLabel}>
-                  People
+                  Personnes
                 </Text>
                 <Text variant="bodyLarge" style={styles.detailValue}>
                   {reservation.nb_people}
                 </Text>
               </View>
-              
+
               <View style={styles.detailItem}>
                 <Text variant="labelMedium" style={styles.detailLabel}>
-                  Canoes
+                  Canoës
                 </Text>
                 <Text variant="bodyLarge" style={styles.detailValue}>
                   {reservation.single_canoes}S + {reservation.double_canoes}D
                 </Text>
               </View>
-              
+
               <View style={styles.detailItem}>
                 <Text variant="labelMedium" style={styles.detailLabel}>
-                  Time Slot
+                  Créneau
                 </Text>
                 <Text variant="bodyLarge" style={styles.detailValue}>
                   {timeSlotLabels[reservation.timeslot]}

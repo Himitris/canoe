@@ -1,8 +1,18 @@
 import React, { useState, useCallback } from 'react';
 import { View, FlatList, StyleSheet, RefreshControl } from 'react-native';
-import { Card, Text, Chip, IconButton, FAB, Searchbar, useTheme, Menu } from 'react-native-paper';
+import {
+  Card,
+  Text,
+  Chip,
+  IconButton,
+  FAB,
+  Searchbar,
+  useTheme,
+  Menu,
+} from 'react-native-paper';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { format } from 'date-fns';
+import { fr } from 'date-fns/locale';
 import { useDatabase } from '../../components/database/DatabaseProvider';
 import { Reservation } from '../../services/DatabaseService';
 
@@ -14,16 +24,16 @@ const statusColors = {
 };
 
 const statusLabels = {
-  pending: 'Pending',
-  ongoing: 'Ongoing',
-  completed: 'Completed',
-  canceled: 'Canceled',
+  pending: 'En attente',
+  ongoing: 'En cours',
+  completed: 'Terminé',
+  canceled: 'Annulé',
 };
 
 const timeSlotLabels = {
-  morning: 'Morning',
-  afternoon: 'Afternoon',
-  full_day: 'Full Day',
+  morning: 'Matin',
+  afternoon: 'Après-midi',
+  full_day: 'Journée complète',
 };
 
 export default function Reservations() {
@@ -31,11 +41,15 @@ export default function Reservations() {
   const theme = useTheme();
   const router = useRouter();
   const [reservations, setReservations] = useState<Reservation[]>([]);
-  const [filteredReservations, setFilteredReservations] = useState<Reservation[]>([]);
+  const [filteredReservations, setFilteredReservations] = useState<
+    Reservation[]
+  >([]);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [menuVisible, setMenuVisible] = useState<{ [key: number]: boolean }>({});
+  const [menuVisible, setMenuVisible] = useState<{ [key: number]: boolean }>(
+    {}
+  );
 
   const loadReservations = async () => {
     if (!db) return;
@@ -45,7 +59,7 @@ export default function Reservations() {
       setReservations(data);
       filterReservations(data, searchQuery, statusFilter);
     } catch (error) {
-      console.error('Error loading reservations:', error);
+      console.error('Erreur lors du chargement des réservations:', error);
     }
   };
 
@@ -57,14 +71,14 @@ export default function Reservations() {
     let filtered = data;
 
     if (status !== 'all') {
-      filtered = filtered.filter(r => r.status === status);
+      filtered = filtered.filter((r) => r.status === status);
     }
 
     if (query.trim()) {
       const searchLower = query.toLowerCase();
-      filtered = filtered.filter(r =>
-        r.name.toLowerCase().includes(searchLower) ||
-        r.date.includes(query)
+      filtered = filtered.filter(
+        (r) =>
+          r.name.toLowerCase().includes(searchLower) || r.date.includes(query)
       );
     }
 
@@ -95,20 +109,23 @@ export default function Reservations() {
     filterReservations(reservations, searchQuery, status);
   };
 
-  const updateReservationStatus = async (id: number, status: Reservation['status']) => {
+  const updateReservationStatus = async (
+    id: number,
+    status: Reservation['status']
+  ) => {
     if (!db) return;
 
     try {
       await db.updateReservation(id, { status });
       await loadReservations();
-      setMenuVisible(prev => ({ ...prev, [id]: false }));
+      setMenuVisible((prev) => ({ ...prev, [id]: false }));
     } catch (error) {
-      console.error('Error updating reservation status:', error);
+      console.error('Erreur lors de la mise à jour du statut:', error);
     }
   };
 
   const toggleMenu = (id: number) => {
-    setMenuVisible(prev => ({
+    setMenuVisible((prev) => ({
       ...prev,
       [id]: !prev[id],
     }));
@@ -123,7 +140,8 @@ export default function Reservations() {
               {item.name}
             </Text>
             <Text variant="bodyMedium" style={styles.reservationDate}>
-              {format(new Date(item.date), 'MMM dd, yyyy')} • {item.arrival_time}
+              {format(new Date(item.date), 'dd MMM yyyy', { locale: fr })} •{' '}
+              {item.arrival_time}
             </Text>
           </View>
           <Menu
@@ -139,22 +157,22 @@ export default function Reservations() {
           >
             <Menu.Item
               onPress={() => updateReservationStatus(item.id!, 'pending')}
-              title="Mark as Pending"
+              title="Marquer en attente"
               leadingIcon="clock-outline"
             />
             <Menu.Item
               onPress={() => updateReservationStatus(item.id!, 'ongoing')}
-              title="Mark as Ongoing"
+              title="Marquer en cours"
               leadingIcon="play"
             />
             <Menu.Item
               onPress={() => updateReservationStatus(item.id!, 'completed')}
-              title="Mark as Completed"
+              title="Marquer terminé"
               leadingIcon="check"
             />
             <Menu.Item
               onPress={() => updateReservationStatus(item.id!, 'canceled')}
-              title="Cancel"
+              title="Annuler"
               leadingIcon="close"
             />
           </Menu>
@@ -163,19 +181,19 @@ export default function Reservations() {
         <View style={styles.reservationDetails}>
           <View style={styles.detailRow}>
             <Text variant="bodySmall" style={styles.detailLabel}>
-              People:
+              Personnes :
             </Text>
             <Text variant="bodyMedium" style={styles.detailValue}>
               {item.nb_people}
             </Text>
           </View>
-          
+
           <View style={styles.detailRow}>
             <Text variant="bodySmall" style={styles.detailLabel}>
-              Canoes:
+              Canoës :
             </Text>
             <Text variant="bodyMedium" style={styles.detailValue}>
-              {item.single_canoes} single, {item.double_canoes} double
+              {item.single_canoes} simple(s), {item.double_canoes} double(s)
             </Text>
           </View>
         </View>
@@ -198,20 +216,22 @@ export default function Reservations() {
 
   const renderFilterChips = () => (
     <View style={styles.filterContainer}>
-      {['all', 'pending', 'ongoing', 'completed', 'canceled'].map(status => (
+      {['all', 'pending', 'ongoing', 'completed', 'canceled'].map((status) => (
         <Chip
           key={status}
           selected={statusFilter === status}
           onPress={() => handleStatusFilter(status)}
           style={[
             styles.filterChip,
-            statusFilter === status && { backgroundColor: theme.colors.primary },
+            statusFilter === status && {
+              backgroundColor: theme.colors.primary,
+            },
           ]}
-          textStyle={[
-            statusFilter === status && { color: 'white' },
-          ]}
+          textStyle={[statusFilter === status && { color: 'white' }]}
         >
-          {status === 'all' ? 'All' : statusLabels[status as keyof typeof statusLabels]}
+          {status === 'all'
+            ? 'Toutes'
+            : statusLabels[status as keyof typeof statusLabels]}
         </Chip>
       ))}
     </View>
@@ -220,7 +240,7 @@ export default function Reservations() {
   if (!isReady) {
     return (
       <View style={styles.loadingContainer}>
-        <Text>Loading...</Text>
+        <Text>Chargement...</Text>
       </View>
     );
   }
@@ -229,7 +249,7 @@ export default function Reservations() {
     <View style={styles.container}>
       <View style={styles.searchContainer}>
         <Searchbar
-          placeholder="Search by name or date..."
+          placeholder="Rechercher par nom ou date..."
           onChangeText={handleSearch}
           value={searchQuery}
           style={styles.searchbar}
@@ -260,8 +280,8 @@ export default function Reservations() {
           <View style={styles.emptyContainer}>
             <Text variant="bodyLarge" style={styles.emptyText}>
               {searchQuery || statusFilter !== 'all'
-                ? 'No reservations match your filters'
-                : 'No reservations found'}
+                ? 'Aucune réservation ne correspond aux filtres'
+                : 'Aucune réservation trouvée'}
             </Text>
           </View>
         )}
@@ -271,6 +291,7 @@ export default function Reservations() {
         icon="plus"
         style={styles.fab}
         onPress={() => router.push('/add-reservation')}
+        label="Réserver"
       />
     </View>
   );
